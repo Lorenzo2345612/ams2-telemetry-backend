@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends
 from models.race_udps import RaceRequest
 from models.database import RaceStatus
+from models.lap_comparison import LapComparisonResponse
 from dependencies.race_dependencies import get_file_storage_service
 from database.db_config import get_db
 from repositories.race_repository import RaceRepositoryDB
 from rq_config.redis_config import get_race_queue
 from workers.race_worker import process_race_data
+from service.lap_comparison_service import LapComparisonService
 from sqlalchemy.orm import Session
 from typing import List
 from base64 import b64decode
@@ -115,3 +117,69 @@ async def get_race_status(race_id: str, db: Session = Depends(get_db)):
         "raw_data_path": race.raw_data_path,
         "laps_count": len(race.laps) if race.laps else 0
     }
+
+@router.get("/{race_id}/compare/{lap_1_number}/{lap_2_number}", response_model=LapComparisonResponse)
+async def compare_laps(
+    race_id: str,
+    lap_1_number: int,
+    lap_2_number: int,
+    db: Session = Depends(get_db)
+) -> LapComparisonResponse:
+    """
+    Compare two laps from the same race and return delta time analysis.
+
+    Args:
+        race_id: The UUID of the race
+        lap_1_number: Reference lap number
+        lap_2_number: Comparison lap number
+
+    Returns:
+        Complete lap comparison data including:
+        - Summary statistics (lap times, delta min/max, speeds)
+        - Delta time series
+        - Speed, throttle, brake, and steering comparisons
+    """
+    repository = RaceRepositoryDB(db)
+    storage_service = get_file_storage_service()
+
+    # Get race to ensure it exists and is ready
+    race = await repository.get_race(race_id)
+    if not race:
+        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+
+    if race.status != RaceStatus.READY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Race is not ready for comparison. Current status: {race.status.value}"
+        )
+
+    # Find laps by lap number
+    lap_1 = next((lap for lap in race.laps if lap.lap_number == lap_1_number), None)
+    lap_2 = next((lap for lap in race.laps if lap.lap_number == lap_2_number), None)
+
+    if not lap_1:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Lap {lap_1_number} not found in race {race_id}"
+        )
+
+    if not lap_2:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Lap {lap_2_number} not found in race {race_id}"
+        )
+
+    # Create comparison service and compare laps
+    comparison_service = LapComparisonService(storage_service)
+
+    try:
+        comparison_data = await comparison_service.compare_laps(
+            lap_1_s3_path=lap_1.processed_data_path,
+            lap_2_s3_path=lap_2.processed_data_path
+        )
+        return comparison_data
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error comparing laps: {str(e)}"
+        )

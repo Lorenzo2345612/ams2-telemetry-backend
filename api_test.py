@@ -2,8 +2,8 @@ import base64
 import requests
 from pathlib import Path
 
-API_URL = "http://localhost:8000/race/upload"
-DEFLECTED_FILE_PATH = "./mock_storage/6449dc68-ef04-4497-b2dd-abb7dce8b9c5.bin"
+API_URL = "https://api-production-9f0e.up.railway.app/race/upload"
+DEFLECTED_FILE_PATH = "./mock_storage/5dd023c6-519a-4618-b3e4-4c2933f7ebc4.deflate"
 
 # 1. Load raw deflate bytes
 compressed_bytes = Path(DEFLECTED_FILE_PATH).read_bytes()
