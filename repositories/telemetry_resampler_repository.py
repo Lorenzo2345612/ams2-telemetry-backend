@@ -50,7 +50,7 @@ class AMS2TelemetryResamplerRepository(TelemetryResamplerRepository):
 
     def resample_lap(self, lap_json: dict, target_frames: int) -> dict:
         """
-        Resamplea una vuelta a un número fijo de frames.
+        Resamplea una vuelta a un número fijo de frames usando distancia como eje común.
         """
         lap_number = lap_json["lap_number"]
         data = lap_json["data"]
@@ -67,23 +67,27 @@ class AMS2TelemetryResamplerRepository(TelemetryResamplerRepository):
         # Calcular lap_time desde timings
         lap_time = max([t.get("current_time", 0) for t in timings])
         
-        # Ordenar por tick_count para telemetry
-        telemetry = sorted(telemetry, key=lambda x: x.get("tick_count", 0))
-        n_telem = len(telemetry)
+        # Obtener la distancia total de la vuelta (desde cualquiera de las fuentes)
+        max_distance_timings = max([t.get("lap_distance", 0) for t in timings])
+        max_distance_telemetry = max([t.get("lap_distance", 0) for t in telemetry])
+        total_lap_distance = max(max_distance_timings, max_distance_telemetry)
         
-        # Eje temporal para telemetría
-        t_telem = np.linspace(0.0, 1.0, n_telem)
-        t_resampled = np.linspace(0.0, 1.0, target_frames)
+        # Crear el eje de distancia resampleado (común para ambos)
+        distance_resampled = np.linspace(0.0, total_lap_distance, target_frames)
         
-        interpolators = {}
+        # ========== INTERPOLAR TELEMETRÍA ==========
+        telemetry = sorted(telemetry, key=lambda x: x.get("lap_distance", 0))
+        distances_telem = np.array([t.get("lap_distance", 0) for t in telemetry], dtype=np.float32)
+        
+        interpolators_telem = {}
         
         # Interpolar features continuas de telemetría
         for feature in CONTINUOUS_FEATURES:
             raw = np.array([f.get(feature, 0.0) for f in telemetry], dtype=np.float32)
             clean = self.sanitize_signal(raw)
             
-            interpolators[feature] = interp1d(
-                t_telem,
+            interpolators_telem[feature] = interp1d(
+                distances_telem,
                 clean,
                 kind="linear",
                 bounds_error=False,
@@ -96,7 +100,7 @@ class AMS2TelemetryResamplerRepository(TelemetryResamplerRepository):
         gear_raw = np.nan_to_num(gear_raw, nan=0, posinf=0, neginf=0)
         
         gear_interp = interp1d(
-            t_telem,
+            distances_telem,
             gear_raw,
             kind="nearest",
             bounds_error=False,
@@ -104,48 +108,47 @@ class AMS2TelemetryResamplerRepository(TelemetryResamplerRepository):
             assume_sorted=True,
         )
         
-        # Interpolar lap_distance de timings
+        # ========== INTERPOLAR TIMINGS ==========
         timings = sorted(timings, key=lambda x: x.get("lap_distance", 0))
-        n_timings = len(timings)
+        distances_timing = np.array([t.get("lap_distance", 0) for t in timings], dtype=np.float32)
         
-        t_timings = np.linspace(0.0, 1.0, n_timings)
-        lap_distances = np.array([t.get("lap_distance", 0) for t in timings], dtype=np.float32)
+        # Interpolar current_time desde timings
+        current_times = np.array([t.get("current_time", 0) for t in timings], dtype=np.float32)
         
-        distance_interp = interp1d(
-            t_timings,
-            lap_distances,
+        time_interp = interp1d(
+            distances_timing,
+            current_times,
             kind="linear",
             bounds_error=False,
-            fill_value=(lap_distances[0], lap_distances[-1]),
+            fill_value=(current_times[0], current_times[-1]),
             assume_sorted=True,
         )
         
-        # Construir frames resampleados
+        # ========== CONSTRUIR FRAMES RESAMPLEADOS ==========
         resampled_data = []
         
-        for t in t_resampled:
+        for dist in distance_resampled:
             frame = {
-                "time": float(t * lap_time),
-                "lap_distance": float(distance_interp(t))
+                "lap_distance": float(dist),
+                "time": float(time_interp(dist))
             }
             
             # Agregar features de telemetría
-            for feature, fn in interpolators.items():
-                val = float(fn(t))
+            for feature, fn in interpolators_telem.items():
+                val = float(fn(dist))
                 frame[feature] = float(np.nan_to_num(val, nan=0.0, posinf=0.0, neginf=0.0))
             
-            frame["gear"] = int(gear_interp(t))
+            frame["gear"] = int(gear_interp(dist))
             resampled_data.append(frame)
         
         return {
             "lap_number": lap_number,
             "lap_time": lap_time,
             "frames": target_frames,
-            "original_telemetry_points": n_telem,
-            "original_timing_points": n_timings,
+            "original_telemetry_points": len(telemetry),
+            "original_timing_points": len(timings),
             "data": resampled_data,
         }
-    
     # -----------------------------
     # LIMPIEZA DE SEÑALES
     # -----------------------------
@@ -175,36 +178,28 @@ class AMS2TelemetryResamplerRepository(TelemetryResamplerRepository):
 
 
     # -----------------------------
-    # ELIMINAR DUPLICADOS DE TIMINGS
-    # -----------------------------
-    def remove_timing_duplicates(self, timings: list) -> list:
-        """
-        Elimina timings duplicados basándose en lap_distance y current_lap.
-        Mantiene el primer registro de cada combinación única.
-        """
-        seen = set()
-        unique_timings = []
-        
-        for timing in timings:
-            key = (timing.get("current_lap"), timing.get("lap_distance"))
-            if key not in seen:
-                seen.add(key)
-                unique_timings.append(timing)
-        
-        return unique_timings
-
-
-    # -----------------------------
     # SEPARAR DATOS POR TIPO
     # -----------------------------
     def separate_data_by_type(self, data: list) -> tuple:
         """
         Separa los datos en timings y telemetry.
+        Elimina datos del inicio que pertenecen a la vuelta anterior (lap_distance negativo).
         """
         timings = [d for d in data if d.get("type") == "timings"]
         telemetry = [d for d in data if d.get("type") == "telemetry"]
         
-        # Eliminar duplicados de timings
-        timings = self.remove_timing_duplicates(timings)
+        # Contar cuántos timings tienen lap_distance negativo al inicio
+        invalid_count = 0
+        for timing in timings:
+            if timing.get("lap_distance", 0) < 0:
+                invalid_count += 1
+            else:
+                break  # Dejar de contar cuando encontramos el primer válido
+        
+        # Eliminar los primeros n timings inválidos
+        if invalid_count > 0:
+            timings = timings[invalid_count:]
+            # Eliminar también los primeros n frames de telemetría
+            telemetry = telemetry[invalid_count:]
         
         return timings, telemetry
