@@ -48,6 +48,16 @@ class RaceRepository(ABC):
         """Get multiple laps by race_id and lap_numbers."""
         pass
 
+    @abstractmethod
+    async def list_races(self) -> List[Race]:
+        """List all races with their details."""
+        pass
+
+    @abstractmethod
+    async def delete_race(self, race_id: str) -> None:
+        """Delete a race and all associated data."""
+        pass
+
 class RaceRepositoryDB(RaceRepository):
     """SQLAlchemy-based race repository for PostgreSQL."""
 
@@ -141,6 +151,17 @@ class RaceRepositoryDB(RaceRepository):
         races = self.db.query(Race.race_id).all()
         return [race.race_id for race in races]
 
+    async def list_races(self) -> List[Race]:
+        """List all races with their details, ordered by created_at descending."""
+        return self.db.query(Race).order_by(Race.created_at.desc()).all()
+
+    async def delete_race(self, race_id: str) -> None:
+        """Delete a race and all associated data (laps cascade delete)."""
+        race = self.db.query(Race).filter(Race.race_id == race_id).first()
+        if race:
+            self.db.delete(race)
+            self.db.commit()
+
 class RaceRepositoryMock(RaceRepository):
     path = "mock_race_data"
 
@@ -191,5 +212,13 @@ class RaceRepositoryMock(RaceRepository):
         files = os.listdir(self.path)
         race_ids = [f.split("_")[1].split(".")[0] for f in files if f.startswith("race_")]
         return race_ids
+
+    async def list_races(self) -> List[Race]:
+        # Mock implementation
+        return []
+
+    async def delete_race(self, race_id: str) -> None:
+        # Mock implementation
+        pass
 
 

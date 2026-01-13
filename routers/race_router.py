@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from models.race_udps import RaceRequest
 from models.database import RaceStatus
 from models.lap_comparison import LapComparisonResponse
@@ -12,7 +13,7 @@ from service.lap_comparison_service import LapComparisonService
 from service.fuel_analysis_service import FuelAnalysisService
 from sqlalchemy.orm import Session
 from typing import List
-from base64 import b64decode
+from base64 import b64decode, b64encode
 from fastapi import HTTPException
 import uuid
 
@@ -96,6 +97,131 @@ async def list_race_ids(db: Session = Depends(get_db)) -> List[str]:
     """List all race IDs from the database."""
     repository = RaceRepositoryDB(db)
     return await repository.list_race_ids()
+
+
+@router.get("/list")
+async def list_races(db: Session = Depends(get_db)) -> List[dict]:
+    """
+    List all races with their details.
+
+    Returns:
+        List of race objects with id, status, created_at, laps_count
+    """
+    repository = RaceRepositoryDB(db)
+    races = await repository.list_races()
+
+    return [
+        {
+            "race_id": race.race_id,
+            "status": race.status.value,
+            "created_at": race.created_at.isoformat(),
+            "updated_at": race.updated_at.isoformat(),
+            "laps_count": len(race.laps) if race.laps else 0,
+            "raw_data_path": race.raw_data_path,
+        }
+        for race in races
+    ]
+
+
+@router.get("/{race_id}/download")
+async def download_race_data(race_id: str, db: Session = Depends(get_db)):
+    """
+    Download the raw compressed data for a race.
+
+    Returns:
+        Base64 encoded raw data with metadata
+    """
+    repository = RaceRepositoryDB(db)
+    storage_service = get_file_storage_service()
+
+    # Get race to ensure it exists
+    race = await repository.get_race_status(race_id)
+    if not race:
+        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+
+    if not race.raw_data_path:
+        raise HTTPException(status_code=404, detail=f"No raw data available for race {race_id}")
+
+    try:
+        # Download raw data from S3
+        raw_bytes = await storage_service.get_file(race.raw_data_path)
+
+        # Return as base64 encoded string with metadata
+        return {
+            "race_id": race_id,
+            "status": race.status.value,
+            "size_bytes": len(raw_bytes),
+            "data": b64encode(raw_bytes).decode('utf-8'),
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error downloading race data: {str(e)}"
+        )
+
+
+@router.get("/{race_id}/download/raw")
+async def download_race_data_raw(race_id: str, db: Session = Depends(get_db)):
+    """
+    Download the raw compressed data for a race as binary file.
+
+    Returns:
+        Binary file response with the raw deflate data
+    """
+    repository = RaceRepositoryDB(db)
+    storage_service = get_file_storage_service()
+
+    # Get race to ensure it exists
+    race = await repository.get_race_status(race_id)
+    if not race:
+        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+
+    if not race.raw_data_path:
+        raise HTTPException(status_code=404, detail=f"No raw data available for race {race_id}")
+
+    try:
+        # Download raw data from S3
+        raw_bytes = await storage_service.get_file(race.raw_data_path)
+
+        # Return as binary file download
+        return Response(
+            content=raw_bytes,
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f"attachment; filename=race_{race_id}.deflate"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error downloading race data: {str(e)}"
+        )
+
+
+@router.delete("/{race_id}")
+async def delete_race(race_id: str, db: Session = Depends(get_db)):
+    """
+    Delete a race and all associated data.
+
+    Returns:
+        Confirmation message
+    """
+    repository = RaceRepositoryDB(db)
+
+    # Get race to ensure it exists
+    race = await repository.get_race_status(race_id)
+    if not race:
+        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+
+    try:
+        await repository.delete_race(race_id)
+        return {"message": f"Race {race_id} deleted successfully"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error deleting race: {str(e)}"
+        )
+
 
 @router.get("/{race_id}/status")
 async def get_race_status(race_id: str, db: Session = Depends(get_db)):
