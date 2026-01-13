@@ -96,7 +96,7 @@ class AMS2TelemetryParser(TelemetryParser):
     
     def parse_telemetry(self, data):
         """
-        Parsea paquete tipo 0 (eCarPhysics) - CON TICK_COUNT
+        Parsea paquete tipo 0 (eCarPhysics) - CON COMBUSTIBLE EN LITROS
         """
         if len(data) < 556:
             return None
@@ -123,7 +123,9 @@ class AMS2TelemetryParser(TelemetryParser):
             offset += 2  # water_temp
             offset += 2  # water_pressure
             offset += 2  # fuel_pressure
-            offset += 1  # fuel_capacity
+            
+            fuel_capacity = struct.unpack_from('B', data, offset)[0]
+            offset += 1
             
             brake = struct.unpack_from('B', data, offset)[0] / 255.0
             offset += 1
@@ -131,9 +133,9 @@ class AMS2TelemetryParser(TelemetryParser):
             offset += 1
             offset += 1  # clutch
 
-            # Datos del motor
-            fuel_level = struct.unpack_from('<f', data, offset)[0]
+            fuel_level_percentage = struct.unpack_from('<f', data, offset)[0]
             offset += 4
+            
             speed = struct.unpack_from('<f', data, offset)[0]
             offset += 4
             rpm = struct.unpack_from('<H', data, offset)[0]
@@ -213,6 +215,8 @@ class AMS2TelemetryParser(TelemetryParser):
             # Offset 555 (tamaño total 559 bytes)
             tick_count = struct.unpack_from('<I', data, offset)[0]
 
+            fuel_liters = fuel_level_percentage * fuel_capacity
+
             return {
                 'throttle': throttle,
                 'brake': brake,
@@ -221,12 +225,14 @@ class AMS2TelemetryParser(TelemetryParser):
                 'rpm': rpm,
                 'max_rpm': max_rpm,
                 'gear': gear,
-                'fuel_level': fuel_level,
                 'yaw': yaw,
                 'pos_x': pos_x,
                 'pos_y': pos_y,
                 'pos_z': pos_z,
-                'tick_count': tick_count
+                'tick_count': tick_count,
+                'fuel_capacity': fuel_capacity,
+                'fuel_level_percentage': fuel_level_percentage,
+                'fuel_liters': round(fuel_liters, 2),
             }
 
         except Exception as e:
