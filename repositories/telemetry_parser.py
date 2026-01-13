@@ -1,37 +1,11 @@
 from abc import ABC, abstractmethod
 import struct
 from collections import defaultdict
-from dataclasses import dataclass
 
 class TelemetryParser(ABC):
     @abstractmethod
     async def parse(self, data: bytes) -> list[dict]:
         pass
-
-@dataclass
-class TimingsData:
-    current_lap: int
-    current_time: float
-    tick_count: int 
-
-@dataclass
-class TelemetryData:
-    throttle: float
-    brake: float
-    steering: float
-    speed: float
-    rpm: int
-    gear: int
-    pos_x: float
-    pos_y: float
-    pos_z: float
-    yaw: float
-    tick_count: int
-
-@dataclass
-class LapData:
-    timings: TimingsData
-    telemetry: list[TelemetryData]
 
 
 class AMS2TelemetryParser(TelemetryParser):
@@ -68,14 +42,49 @@ class AMS2TelemetryParser(TelemetryParser):
     def merge_telemetry_and_timings(self, parsed_data):
         """
         Combina telemetría y timings en una sola línea de tiempo ordenada
+        
+        ESTRATEGIA:
+        - Solo telemetría tiene tick_count confiable
+        - Ordenamos todo por tick_count de telemetría
+        - Insertamos timings en posición cercana basándonos en lap_distance
         """
-        combined = parsed_data['packages']
-
-        # Merge in laps
+        packages = parsed_data['packages']
+        
+        # Separar telemetría y timings
+        telemetry_list = [p for p in packages if p['type'] == 'telemetry']
+        timings_list = [p for p in packages if p['type'] == 'timings']
+        
+        # Ordenar telemetría por tick_count
+        telemetry_list.sort(key=lambda x: x['tick_count'])
+        
+        # Crear línea de tiempo inicial con telemetría
+        timeline = telemetry_list.copy()
+        
+        # Insertar cada timing cerca de la telemetría más cercana
+        for timing in timings_list:
+            best_idx = 0
+            min_distance = float('inf')
+            
+            # Buscar la telemetría más cercana por lap_distance
+            for idx, tel in enumerate(timeline):
+                if tel['type'] == 'telemetry':
+                    # Comparar distancia en vuelta
+                    tel_distance = tel.get('lap_distance', 0)
+                    tim_distance = timing.get('lap_distance', 0)
+                    distance_diff = abs(tel_distance - tim_distance)
+                    
+                    if distance_diff < min_distance:
+                        min_distance = distance_diff
+                        best_idx = idx
+            
+            # Insertar timing después de la telemetría más cercana
+            timeline.insert(best_idx + 1, timing)
+        
+        # Agrupar por vueltas
         laps = []
         current_lap = 0
 
-        for entry in combined:
+        for entry in timeline:
             if entry['type'] == 'timings':
                 if entry['current_lap'] > current_lap:
                     current_lap = entry['current_lap']
@@ -96,27 +105,19 @@ class AMS2TelemetryParser(TelemetryParser):
     
     def parse_telemetry(self, data):
         """
-        Parsea paquete tipo 0 (eCarPhysics) - CON COMBUSTIBLE EN LITROS
+        Parsea paquete tipo 0 (eCarPhysics) - CON COMBUSTIBLE Y TICK_COUNT
         """
         if len(data) < 556:
             return None
 
         try:
-            offset = 12  # Después del header base
+            offset = 12
 
-            # sViewedParticipantIndex
-            offset += 1
-
-            # Inputs sin filtrar (5 bytes)
-            throttle_raw = struct.unpack_from('B', data, offset)[0] / 255.0
-            offset += 1
-            brake_raw = struct.unpack_from('B', data, offset)[0] / 255.0
-            offset += 1
-            steering_raw = struct.unpack_from('b', data, offset)[0] / 127.0
-            offset += 1
+            offset += 1  # viewed_participant
+            offset += 1  # throttle_raw
+            offset += 1  # brake_raw
+            offset += 1  # steering_raw
             offset += 1  # clutch_raw
-
-            # Flags y temperaturas (15 bytes)
             offset += 1  # car_flags
             offset += 2  # oil_temp
             offset += 2  # oil_pressure
@@ -154,11 +155,8 @@ class AMS2TelemetryParser(TelemetryParser):
             offset += 1  # crash_state
             offset += 4  # odometer
 
-            # Orientación [yaw, pitch, roll]
             yaw = struct.unpack_from('<f', data, offset)[0]
-            offset += 12
-
-            # Velocidades (para referencia, pero NO las usamos para posición)
+            offset += 12  # orientation completa
             offset += 12  # local_velocity
             offset += 12  # world_velocity
             offset += 12  # angular_velocity
@@ -166,53 +164,22 @@ class AMS2TelemetryParser(TelemetryParser):
             offset += 12  # world_acceleration
             offset += 12  # extents_centre
 
-            # Saltamos datos de neumáticos y suspensión
-            offset += 4   # tyre_flags[4]
-            offset += 4   # terrain[4]
-            offset += 16  # tyre_y[4]
-            offset += 16  # tyre_rps[4]
-            offset += 4   # tyre_temp[4]
-            offset += 16  # tyre_height_above_ground[4]
-            offset += 4   # tyre_wear[4]
-            offset += 4   # brake_damage[4]
-            offset += 4   # suspension_damage[4]
-            offset += 8   # brake_temp_celsius[4]
-            offset += 8   # tyre_tread_temp[4]
-            offset += 8   # tyre_layer_temp[4]
-            offset += 8   # tyre_carcass_temp[4]
-            offset += 8   # tyre_rim_temp[4]
-            offset += 8   # tyre_internal_air_temp[4]
-            offset += 8   # tyre_temp_left[4]
-            offset += 8   # tyre_temp_center[4]
-            offset += 8   # tyre_temp_right[4]
-            offset += 16  # wheel_local_position_y[4]
-            offset += 16  # ride_height[4]
-            offset += 16  # suspension_travel[4]
-            offset += 16  # suspension_velocity[4]
-            offset += 8   # suspension_ride_height[4]
-            offset += 8   # air_pressure[4]
-            offset += 4   # engine_speed
-            offset += 4   # engine_torque
-            offset += 2   # wings[2]
-            offset += 1   # hand_brake
-            offset += 1   # aero_damage
-            offset += 1   # engine_damage
-            offset += 4   # joypad
-            offset += 1   # d_pad
-            offset += 160 # tyre_compound[4][40]
-            offset += 4   # turbo_boost_pressure
+            # Saltar neumáticos y suspensión
+            offset += 4 + 4 + 16 + 16 + 4 + 16 + 4 + 4 + 4 + 8
+            offset += 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8
+            offset += 16 + 16 + 16 + 16 + 8 + 8
+            offset += 4 + 4 + 2 + 1 + 1 + 1 + 4 + 1 + 160 + 4
 
-            # Posición absoluta - sFullPosition[3]
+            # Posición absoluta
             pos_x = struct.unpack_from('<f', data, offset)[0]
             offset += 4
             pos_y = struct.unpack_from('<f', data, offset)[0]
             offset += 4
             pos_z = struct.unpack_from('<f', data, offset)[0]
             offset += 4
-
             offset += 1  # brake_bias
 
-            # Offset 555 (tamaño total 559 bytes)
+            # 🔥 TICK_COUNT - Solo existe en telemetría
             tick_count = struct.unpack_from('<I', data, offset)[0]
 
             fuel_liters = fuel_level_percentage * fuel_capacity
@@ -243,77 +210,55 @@ class AMS2TelemetryParser(TelemetryParser):
 
     def parse_timings(self, data):
         """
-        Parsea paquete tipo 3 (eTimings) - CON TICK_COUNT
+        Parsea paquete tipo 3 (eTimings)
+        ⚠️ ESTE PAQUETE NO TIENE TICK_COUNT
+        Tamaño: ~128 bytes (variable según número de participantes)
         """
         if len(data) < 50:
             return None
 
         try:
-            offset = 12  # Después del header base
+            offset = 12
             
             # sNumParticipants
             num_participants = struct.unpack_from('b', data, offset)[0]
             offset += 1
             
-            # sParticipantsChangedTimestamp
+            # sParticipantsChangedTimestamp (podemos usarlo como identificador)
+            participants_timestamp = struct.unpack_from('<I', data, offset)[0]
             offset += 4
             
             # sEventTimeRemaining
             offset += 4
             
-            # sSplitTimeAhead, sSplitTimeBehind, sSplitTime
-            offset += 4
-            offset += 4
-            offset += 4
+            # Splits
+            offset += 4 + 4 + 4
 
-            # Array de participantes - leemos el primero (jugador)
-            # sWorldPosition[3] - int16 * 3
-            offset += 6
-            # sOrientation[3] - int16 * 3
-            offset += 6
-            # sCurrentLapDistance - uint16
+            # Primer participante (jugador)
+            offset += 6  # world_position[3]
+            offset += 6  # orientation[3]
+            
             lap_distance = struct.unpack_from('<H', data, offset)[0]
             offset += 2
-            # sRacePosition - uint8
-            offset += 1
-            # sSector - uint8
-            offset += 1
-            # sHighestFlag - uint8
-            offset += 1
-            # sPitModeSchedule - uint8
-            offset += 1
-            # sCarIndex - uint16
-            offset += 2
-            # sRaceState - uint8
-            offset += 1
-            # sCurrentLap - uint8
+            offset += 1  # race_position
+            offset += 1  # sector
+            offset += 1  # highest_flag
+            offset += 1  # pit_mode_schedule
+            offset += 2  # car_index
+            offset += 1  # race_state
+            
             current_lap = struct.unpack_from('B', data, offset)[0]
             offset += 1
-            # sCurrentTime - float
             current_time = struct.unpack_from('<f', data, offset)[0]
-            offset += 4
-            # sCurrentSectorTime - float
-            offset += 4
-            # sMPParticipantIndex - uint16
-            offset += 2
 
-            # Ahora tenemos que saltar el resto de participantes para llegar al TickCount
-            # Cada participante ocupa 32 bytes
-            # Ya leímos el primero, saltamos los demás (num_participants - 1) * 32
-            if num_participants > 1:
-                offset += (num_participants - 1) * 32
-
-            # sLocalParticipantIndex - uint16
-            offset += 2
-
-            # 🔥 TICK_COUNT - uint32 al final del paquete de timings
-            tick_count = struct.unpack_from('<I', data, offset)[0]
-
+            # ⚠️ NO INTENTAR LEER TICK_COUNT - NO EXISTE EN ESTE PAQUETE
+            
             return {
                 'current_lap': current_lap,
                 'current_time': current_time,
-                'lap_distance': lap_distance,  # También lo incluimos
-                'tick_count': tick_count,
+                'lap_distance': lap_distance,
+                # Usar participants_timestamp como identificador auxiliar
+                'timestamp': participants_timestamp,
             }
 
         except Exception as e:
