@@ -114,6 +114,20 @@ services:
       - ams2-network
     restart: unless-stopped
 
+  # React Frontend
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+    container_name: ams2-frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - api
+    networks:
+      - ams2-network
+    restart: unless-stopped
+
 networks:
   ams2-network:
     driver: bridge
