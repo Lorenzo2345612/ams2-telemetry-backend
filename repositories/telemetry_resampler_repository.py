@@ -11,6 +11,9 @@ CONTINUOUS_FEATURES = [
     "brake",
     "steering",
     "yaw",
+    'fuel_capacity',
+    'fuel_level_percentage',
+    'fuel_liters'
 ]
 
 DISCRETE_FEATURES = ["gear"]
