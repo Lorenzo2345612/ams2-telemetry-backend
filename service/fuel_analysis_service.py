@@ -1,0 +1,199 @@
+"""
+Service for fuel consumption analysis on single and multiple laps.
+"""
+
+import io
+import numpy as np
+from scipy.interpolate import interp1d
+from typing import List, Tuple
+from service.file_storage_service import FileStorageService
+from models.fuel_analysis import (
+    SingleLapFuelResponse,
+    FuelSummary,
+    FuelCurve,
+    FuelComparisonResponse,
+    FuelComparisonSummary,
+    FuelDeltaSeries,
+    FuelComparisonCurves,
+)
+
+
+class FuelAnalysisService:
+    """Service for analyzing fuel consumption in lap telemetry data."""
+
+    def __init__(self, storage_service: FileStorageService):
+        self.storage_service = storage_service
+
+    async def load_lap_from_s3(self, s3_path: str) -> Tuple[List[dict], float, int]:
+        """
+        Load lap data from S3 storage.
+
+        Args:
+            s3_path: S3 path to the .npy file
+
+        Returns:
+            Tuple of (lap_data, lap_time, lap_number)
+        """
+        # Download file from S3
+        npy_bytes = await self.storage_service.get_file(s3_path)
+
+        # Load numpy data
+        bytes_io = io.BytesIO(npy_bytes)
+        lap_data = np.load(bytes_io, allow_pickle=True).item()
+
+        return (
+            lap_data["data"],
+            lap_data.get("lap_time", 0),
+            lap_data.get("lap_number", 0)
+        )
+
+    def interpolate_fuel_to_common_distances(
+        self,
+        lap_data: List[dict],
+        common_distances: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Interpolate fuel data to common distance grid.
+
+        Args:
+            lap_data: Lap frame data
+            common_distances: Common distance grid
+
+        Returns:
+            Tuple of (fuel_liters, fuel_percentage) arrays
+        """
+        distances = np.array([p["lap_distance"] for p in lap_data])
+        fuel_liters = np.array([p["fuel_liters"] for p in lap_data])
+        fuel_percentage = np.array([p["fuel_level_percentage"] for p in lap_data])
+
+        interp_liters = interp1d(
+            distances, fuel_liters, kind="linear", fill_value="extrapolate"
+        )
+        interp_percentage = interp1d(
+            distances, fuel_percentage, kind="linear", fill_value="extrapolate"
+        )
+
+        return (
+            interp_liters(common_distances),
+            interp_percentage(common_distances),
+        )
+
+    def calculate_fuel_delta(
+        self,
+        lap_1_data: List[dict],
+        lap_2_data: List[dict],
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Calculate fuel consumption delta using distance-based alignment.
+
+        Args:
+            lap_1_data: Reference lap data
+            lap_2_data: Comparison lap data
+
+        Returns:
+            Tuple of (common_distances, fuel_delta, lap_1_fuel, lap_2_fuel)
+        """
+        # Get distance ranges
+        lap_1_distance = np.array([p["lap_distance"] for p in lap_1_data])
+        lap_2_distance = np.array([p["lap_distance"] for p in lap_2_data])
+
+        # Common distance grid
+        max_distance = min(lap_1_distance.max(), lap_2_distance.max())
+        common_distances = np.linspace(0, max_distance, 1000)
+
+        # Interpolate fuel for both laps
+        lap_1_fuel, _ = self.interpolate_fuel_to_common_distances(lap_1_data, common_distances)
+        lap_2_fuel, _ = self.interpolate_fuel_to_common_distances(lap_2_data, common_distances)
+
+        # Normalize fuel to consumption from start (fuel used at each point)
+        lap_1_start = lap_1_data[0]["fuel_liters"]
+        lap_2_start = lap_2_data[0]["fuel_liters"]
+
+        lap_1_consumed = lap_1_start - lap_1_fuel
+        lap_2_consumed = lap_2_start - lap_2_fuel
+
+        # Delta in fuel consumed (positive = lap2 consumed more)
+        fuel_delta = lap_2_consumed - lap_1_consumed
+
+        return common_distances, fuel_delta, lap_1_fuel, lap_2_fuel
+
+    async def analyze_single_lap(self, lap_s3_path: str) -> SingleLapFuelResponse:
+        """
+        Analyze fuel consumption for a single lap.
+
+        Args:
+            lap_s3_path: S3 path to lap data
+
+        Returns:
+            SingleLapFuelResponse with fuel analysis
+        """
+        # Load lap data
+        lap_data, lap_time, lap_number = await self.load_lap_from_s3(lap_s3_path)
+
+        # Create common distance grid for smooth curve
+        max_distance = lap_data[-1]["lap_distance"]
+        common_distances = np.linspace(0, max_distance, 500)
+
+        # Interpolate fuel data
+        fuel_liters, fuel_percentage = self.interpolate_fuel_to_common_distances(
+            lap_data, common_distances
+        )
+
+        # Build response
+        return SingleLapFuelResponse(
+            summary=FuelSummary.from_data(
+                lap_number=lap_number,
+                lap_time=lap_time,
+                lap_data=lap_data,
+            ),
+            fuel_curve=FuelCurve.from_arrays(
+                distance=common_distances,
+                fuel_liters=fuel_liters,
+                fuel_percentage=fuel_percentage,
+            ),
+        )
+
+    async def compare_fuel(
+        self,
+        lap_1_s3_path: str,
+        lap_2_s3_path: str,
+    ) -> FuelComparisonResponse:
+        """
+        Compare fuel consumption between two laps.
+
+        Args:
+            lap_1_s3_path: S3 path to reference lap
+            lap_2_s3_path: S3 path to comparison lap
+
+        Returns:
+            FuelComparisonResponse with comparison data
+        """
+        # Load both laps
+        lap_1_data, lap_1_time, lap_1_number = await self.load_lap_from_s3(lap_1_s3_path)
+        lap_2_data, lap_2_time, lap_2_number = await self.load_lap_from_s3(lap_2_s3_path)
+
+        # Calculate fuel delta
+        common_distances, fuel_delta, lap_1_fuel, lap_2_fuel = self.calculate_fuel_delta(
+            lap_1_data, lap_2_data
+        )
+
+        # Build response
+        return FuelComparisonResponse(
+            summary=FuelComparisonSummary.from_data(
+                lap_1_number=lap_1_number,
+                lap_2_number=lap_2_number,
+                lap_1_time=lap_1_time,
+                lap_2_time=lap_2_time,
+                lap_1_data=lap_1_data,
+                lap_2_data=lap_2_data,
+            ),
+            fuel_delta=FuelDeltaSeries.from_arrays(
+                distance=common_distances,
+                delta=fuel_delta,
+            ),
+            fuel_curves=FuelComparisonCurves.from_arrays(
+                distance=common_distances,
+                lap_1_fuel=lap_1_fuel,
+                lap_2_fuel=lap_2_fuel,
+            ),
+        )

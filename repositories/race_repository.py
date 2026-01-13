@@ -33,6 +33,21 @@ class RaceRepository(ABC):
     async def create_lap(self, race_id: str, lap_number: int, lap_uuid: str, raw_data_path: Optional[str] = None, processed_data_path: Optional[str] = None) -> Lap:
         pass
 
+    @abstractmethod
+    async def get_race_status(self, race_id: str) -> Optional[Race]:
+        """Get race without loading laps relationship."""
+        pass
+
+    @abstractmethod
+    async def get_lap_by_number(self, race_id: str, lap_number: int) -> Optional[Lap]:
+        """Get a specific lap by race_id and lap_number."""
+        pass
+
+    @abstractmethod
+    async def get_laps_by_numbers(self, race_id: str, lap_numbers: List[int]) -> List[Lap]:
+        """Get multiple laps by race_id and lap_numbers."""
+        pass
+
 class RaceRepositoryDB(RaceRepository):
     """SQLAlchemy-based race repository for PostgreSQL."""
 
@@ -66,6 +81,24 @@ class RaceRepositoryDB(RaceRepository):
     async def get_race(self, race_id: str) -> Optional[Race]:
         """Get a race by ID."""
         return self.db.query(Race).filter(Race.race_id == race_id).first()
+
+    async def get_race_status(self, race_id: str) -> Optional[Race]:
+        """Get race without loading laps relationship (only status info)."""
+        return self.db.query(Race).filter(Race.race_id == race_id).first()
+
+    async def get_lap_by_number(self, race_id: str, lap_number: int) -> Optional[Lap]:
+        """Get a specific lap by race_id and lap_number."""
+        return self.db.query(Lap).filter(
+            Lap.race_id == race_id,
+            Lap.lap_number == lap_number
+        ).first()
+
+    async def get_laps_by_numbers(self, race_id: str, lap_numbers: List[int]) -> List[Lap]:
+        """Get multiple laps by race_id and lap_numbers."""
+        return self.db.query(Lap).filter(
+            Lap.race_id == race_id,
+            Lap.lap_number.in_(lap_numbers)
+        ).all()
 
     async def create_lap(self, race_id: str, lap_number: int, lap_uuid: str, raw_data_path: Optional[str] = None, processed_data_path: Optional[str] = None) -> Lap:
         """Create a new lap record."""
@@ -122,6 +155,18 @@ class RaceRepositoryMock(RaceRepository):
     async def get_race(self, race_id: str) -> Optional[Race]:
         # Mock implementation
         return Race(race_id=race_id, status=RaceStatus.READY)
+
+    async def get_race_status(self, race_id: str) -> Optional[Race]:
+        # Mock implementation
+        return Race(race_id=race_id, status=RaceStatus.READY)
+
+    async def get_lap_by_number(self, race_id: str, lap_number: int) -> Optional[Lap]:
+        # Mock implementation
+        return Lap(lap_uuid=str(uuid.uuid4()), race_id=race_id, lap_number=lap_number)
+
+    async def get_laps_by_numbers(self, race_id: str, lap_numbers: List[int]) -> List[Lap]:
+        # Mock implementation
+        return [Lap(lap_uuid=str(uuid.uuid4()), race_id=race_id, lap_number=ln) for ln in lap_numbers]
 
     async def create_lap(self, race_id: str, lap_number: int, lap_uuid: str, raw_data_path: Optional[str] = None, processed_data_path: Optional[str] = None) -> Lap:
         # Mock implementation

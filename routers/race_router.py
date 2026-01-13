@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends
 from models.race_udps import RaceRequest
 from models.database import RaceStatus
 from models.lap_comparison import LapComparisonResponse
+from models.fuel_analysis import SingleLapFuelResponse, FuelComparisonResponse
 from dependencies.race_dependencies import get_file_storage_service
 from database.db_config import get_db
 from repositories.race_repository import RaceRepositoryDB
 from rq_config.redis_config import get_race_queue
 from workers.race_worker import process_race_data
 from service.lap_comparison_service import LapComparisonService
+from service.fuel_analysis_service import FuelAnalysisService
 from sqlalchemy.orm import Session
 from typing import List
 from base64 import b64decode
@@ -142,8 +144,8 @@ async def compare_laps(
     repository = RaceRepositoryDB(db)
     storage_service = get_file_storage_service()
 
-    # Get race to ensure it exists and is ready
-    race = await repository.get_race(race_id)
+    # Get race status without loading all laps
+    race = await repository.get_race_status(race_id)
     if not race:
         raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
 
@@ -153,9 +155,10 @@ async def compare_laps(
             detail=f"Race is not ready for comparison. Current status: {race.status.value}"
         )
 
-    # Find laps by lap number
-    lap_1 = next((lap for lap in race.laps if lap.lap_number == lap_1_number), None)
-    lap_2 = next((lap for lap in race.laps if lap.lap_number == lap_2_number), None)
+    # Get only the specific laps needed
+    laps = await repository.get_laps_by_numbers(race_id, [lap_1_number, lap_2_number])
+    lap_1 = next((lap for lap in laps if lap.lap_number == lap_1_number), None)
+    lap_2 = next((lap for lap in laps if lap.lap_number == lap_2_number), None)
 
     if not lap_1:
         raise HTTPException(
@@ -182,4 +185,126 @@ async def compare_laps(
         raise HTTPException(
             status_code=500,
             detail=f"Error comparing laps: {str(e)}"
+        )
+
+@router.get("/{race_id}/fuel/{lap_number}", response_model=SingleLapFuelResponse)
+async def analyze_lap_fuel(
+    race_id: str,
+    lap_number: int,
+    db: Session = Depends(get_db)
+) -> SingleLapFuelResponse:
+    """
+    Analyze fuel consumption for a single lap.
+
+    Args:
+        race_id: The UUID of the race
+        lap_number: The lap number to analyze
+
+    Returns:
+        Complete fuel analysis including:
+        - Summary (fuel used, consumption rates, estimated laps remaining)
+        - Fuel remaining curve over lap distance
+    """
+    repository = RaceRepositoryDB(db)
+    storage_service = get_file_storage_service()
+
+    # Get race status without loading all laps
+    race = await repository.get_race_status(race_id)
+    if not race:
+        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+
+    if race.status != RaceStatus.READY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Race is not ready for analysis. Current status: {race.status.value}"
+        )
+
+    # Get only the specific lap needed
+    lap = await repository.get_lap_by_number(race_id, lap_number)
+
+    if not lap:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Lap {lap_number} not found in race {race_id}"
+        )
+
+    # Create fuel analysis service and analyze
+    fuel_service = FuelAnalysisService(storage_service)
+
+    try:
+        analysis_data = await fuel_service.analyze_single_lap(
+            lap_s3_path=lap.processed_data_path
+        )
+        return analysis_data
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error analyzing fuel: {str(e)}"
+        )
+
+@router.get("/{race_id}/fuel/compare/{lap_1_number}/{lap_2_number}", response_model=FuelComparisonResponse)
+async def compare_lap_fuel(
+    race_id: str,
+    lap_1_number: int,
+    lap_2_number: int,
+    db: Session = Depends(get_db)
+) -> FuelComparisonResponse:
+    """
+    Compare fuel consumption between two laps.
+
+    Args:
+        race_id: The UUID of the race
+        lap_1_number: Reference lap number
+        lap_2_number: Comparison lap number
+
+    Returns:
+        Complete fuel comparison including:
+        - Summary (fuel used per lap, consumption rates, deltas, more efficient lap)
+        - Fuel consumption delta series over distance
+        - Fuel remaining curves for both laps
+    """
+    repository = RaceRepositoryDB(db)
+    storage_service = get_file_storage_service()
+
+    # Get race status without loading all laps
+    race = await repository.get_race_status(race_id)
+    if not race:
+        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+
+    if race.status != RaceStatus.READY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Race is not ready for comparison. Current status: {race.status.value}"
+        )
+
+    # Get only the specific laps needed
+    laps = await repository.get_laps_by_numbers(race_id, [lap_1_number, lap_2_number])
+    lap_1 = next((lap for lap in laps if lap.lap_number == lap_1_number), None)
+    lap_2 = next((lap for lap in laps if lap.lap_number == lap_2_number), None)
+
+    if not lap_1:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Lap {lap_1_number} not found in race {race_id}"
+        )
+
+    if not lap_2:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Lap {lap_2_number} not found in race {race_id}"
+        )
+
+    # Create fuel analysis service and compare
+    fuel_service = FuelAnalysisService(storage_service)
+
+    try:
+        comparison_data = await fuel_service.compare_fuel(
+            lap_1_s3_path=lap_1.processed_data_path,
+            lap_2_s3_path=lap_2.processed_data_path
+        )
+        return comparison_data
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error comparing fuel: {str(e)}"
         )
