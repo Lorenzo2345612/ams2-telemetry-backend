@@ -57,8 +57,8 @@ class LapComparisonService:
         lap_1_distance = np.array([p["lap_distance"] for p in lap_1_data])
         lap_2_distance = np.array([p["lap_distance"] for p in lap_2_data])
 
-        lap_1_time = np.array([p["time"] for p in lap_1_data])
-        lap_2_time = np.array([p["time"] for p in lap_2_data])
+        lap_1_time = np.array([p["current_time"] for p in lap_1_data])
+        lap_2_time = np.array([p["current_time"] for p in lap_2_data])
 
         # Create interpolation functions
         interp_lap_1 = interp1d(

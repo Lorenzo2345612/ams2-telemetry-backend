@@ -2,30 +2,23 @@ import base64
 import requests
 from pathlib import Path
 
-API_URL = "https://api-production-9f0e.up.railway.app/race/upload"
-DEFLECTED_FILE_PATH = "./mock_storage/5dd023c6-519a-4618-b3e4-4c2933f7ebc4.deflate"
+API_URL = "http://localhost:8000/race/upload"
+DOWNLOADED_FILE_PATH = "./test_downloaded/race_f4322b83.deflate"
 
-# 1. Load raw deflate bytes
-compressed_bytes = Path(DEFLECTED_FILE_PATH).read_bytes()
+# 1. Load downloaded deflate file
+compressed_bytes = Path(DOWNLOADED_FILE_PATH).read_bytes()
+print(f"Loaded: {len(compressed_bytes)} bytes")
 
-# 2. Encode to Base64 (string)
+# 2. Encode to Base64
 base64_data = base64.b64encode(compressed_bytes).decode("utf-8")
 
-# Optional safety check (recommended)
-assert compressed_bytes == base64.b64decode(base64_data)
-
-# 3. Build request payload
-payload = {
-    "data": base64_data
-}
-
-# 4. Send request
+# 3. Upload
 response = requests.post(
     API_URL,
-    json=payload,
+    json={"data": base64_data},
     timeout=60
 )
 
-# 5. Inspect response
+# 4. Result
 print("Status:", response.status_code)
 print("Response:", response.json())

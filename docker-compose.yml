@@ -93,7 +93,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.worker
+    command: ["rq", "worker", "race_processing", "--with-scheduler", "-v"]
     environment:
+      PYTHONUNBUFFERED: 1
       DATABASE_URL: postgresql://${POSTGRES_USER:-ams2_user}:${POSTGRES_PASSWORD:-ams2_password}@postgres:5432/${POSTGRES_DB:-ams2_telemetry}
       REDIS_HOST: redis
       REDIS_PORT: 6379

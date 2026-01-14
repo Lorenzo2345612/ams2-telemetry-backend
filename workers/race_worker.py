@@ -37,9 +37,11 @@ async def _process_race_data_async(race_id: str, raw_data_s3_path: str):
         race_id: The UUID of the race
         raw_data_s3_path: S3 path to the compressed raw data file
     """
+    print(f"[Worker] Starting processing for race {race_id} inside async function")
     db = SessionLocal()
 
     try:
+        print(f"[Worker] Initializing services")
         # Initialize services
         storage_service = S3FileStorageService(
             bucket_name=os.getenv("S3_BUCKET_NAME", "ams2-telemetry"),
@@ -48,6 +50,8 @@ async def _process_race_data_async(race_id: str, raw_data_s3_path: str):
             aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
             region_name=os.getenv("AWS_REGION", "us-east-1")
         )
+
+        print(f"[Worker] Initializing repositories and parsers")
 
         repository = RaceRepositoryDB(db)
         parser = AMS2TelemetryParser()
@@ -138,4 +142,5 @@ def process_race_data(race_id: str, raw_data_s3_path: str):
         race_id: The UUID of the race
         raw_data_s3_path: S3 path to the compressed raw data file
     """
+    print(f"[Worker] Starting processing for race {race_id}")
     return asyncio.run(_process_race_data_async(race_id, raw_data_s3_path))

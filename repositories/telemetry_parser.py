@@ -22,22 +22,22 @@ class AMS2TelemetryParser(TelemetryParser):
             packets.append(packet_data)
             offset += packet_length
         
-        parsed_data = defaultdict(list)
+        udps = []
         for packet in packets:
             packet_type = self.parse_packet_type(packet)
             if packet_type == 0:
                 telemetry = self.parse_telemetry(packet)
                 if telemetry:
                     telemetry['type'] = 'telemetry'
-                    parsed_data['packages'].append(telemetry)
+                    udps.append(telemetry)
 
             elif packet_type == 3:
                 timings = self.parse_timings(packet)
                 if timings:
                     timings['type'] = 'timings'
-                    parsed_data['packages'].append(timings)
+                    udps.append(timings)
         
-        return self.merge_telemetry_and_timings(parsed_data)
+        return self.merge_telemetry_and_timings(udps)
     
     def merge_telemetry_and_timings(self, parsed_data):
         """
@@ -48,43 +48,12 @@ class AMS2TelemetryParser(TelemetryParser):
         - Ordenamos todo por tick_count de telemetría
         - Insertamos timings en posición cercana basándonos en lap_distance
         """
-        packages = parsed_data['packages']
-        
-        # Separar telemetría y timings
-        telemetry_list = [p for p in packages if p['type'] == 'telemetry']
-        timings_list = [p for p in packages if p['type'] == 'timings']
-        
-        # Ordenar telemetría por tick_count
-        telemetry_list.sort(key=lambda x: x['tick_count'])
-        
-        # Crear línea de tiempo inicial con telemetría
-        timeline = telemetry_list.copy()
-        
-        # Insertar cada timing cerca de la telemetría más cercana
-        for timing in timings_list:
-            best_idx = 0
-            min_distance = float('inf')
-            
-            # Buscar la telemetría más cercana por lap_distance
-            for idx, tel in enumerate(timeline):
-                if tel['type'] == 'telemetry':
-                    # Comparar distancia en vuelta
-                    tel_distance = tel.get('lap_distance', 0)
-                    tim_distance = timing.get('lap_distance', 0)
-                    distance_diff = abs(tel_distance - tim_distance)
-                    
-                    if distance_diff < min_distance:
-                        min_distance = distance_diff
-                        best_idx = idx
-            
-            # Insertar timing después de la telemetría más cercana
-            timeline.insert(best_idx + 1, timing)
         
         # Agrupar por vueltas
         laps = []
         current_lap = 0
 
-        for entry in timeline:
+        for entry in parsed_data:
             if entry['type'] == 'timings':
                 if entry['current_lap'] > current_lap:
                     current_lap = entry['current_lap']
