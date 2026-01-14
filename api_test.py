@@ -2,7 +2,7 @@ import base64
 import requests
 from pathlib import Path
 
-API_URL = "http://localhost:8000/race/upload"
+API_URL = "https://api-production-9f0e.up.railway.app/race/upload"
 DOWNLOADED_FILE_PATH = "./test_downloaded/race_f4322b83.deflate"
 
 # 1. Load downloaded deflate file

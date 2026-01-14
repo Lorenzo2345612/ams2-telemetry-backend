@@ -66,6 +66,31 @@ class FuelSummary(BaseModel):
         )
 
 
+class FuelSpeedScatter(BaseModel):
+    """Scatter plot data for fuel consumption vs speed."""
+
+    speed: List[float] = Field(..., description="Average speed in segment (km/h)")
+    fuel_consumed: List[float] = Field(..., description="Fuel consumed in segment (liters)")
+    throttle: List[float] = Field(..., description="Average throttle in segment (0-1)")
+    gear: List[int] = Field(..., description="Most common gear in segment")
+
+    @classmethod
+    def from_arrays(
+        cls,
+        speed: np.ndarray,
+        fuel_consumed: np.ndarray,
+        throttle: np.ndarray,
+        gear: np.ndarray,
+    ) -> "FuelSpeedScatter":
+        """Create FuelSpeedScatter from numpy arrays."""
+        return cls(
+            speed=speed.tolist(),
+            fuel_consumed=fuel_consumed.tolist(),
+            throttle=throttle.tolist(),
+            gear=gear.astype(int).tolist(),
+        )
+
+
 class FuelCurve(BaseModel):
     """Fuel remaining curve over lap distance."""
 
@@ -93,6 +118,7 @@ class SingleLapFuelResponse(BaseModel):
 
     summary: FuelSummary = Field(..., description="Fuel consumption summary")
     fuel_curve: FuelCurve = Field(..., description="Fuel remaining over distance")
+    fuel_speed_scatter: FuelSpeedScatter = Field(..., description="Fuel consumption vs speed scatter data")
 
 
 class FuelComparisonSummary(BaseModel):

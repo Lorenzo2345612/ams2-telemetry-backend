@@ -11,6 +11,7 @@ from models.fuel_analysis import (
     SingleLapFuelResponse,
     FuelSummary,
     FuelCurve,
+    FuelSpeedScatter,
     FuelComparisonResponse,
     FuelComparisonSummary,
     FuelDeltaSeries,
@@ -117,6 +118,61 @@ class FuelAnalysisService:
 
         return common_distances, fuel_delta, lap_1_fuel, lap_2_fuel
 
+    def calculate_fuel_vs_speed(
+        self,
+        lap_data: List[dict],
+        n_segments: int = 100,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Calculate fuel consumption per segment at different speeds.
+        Compresses lap data into segments for clearer fuel consumption visualization.
+
+        Args:
+            lap_data: Lap frame data
+            n_segments: Number of segments to divide the lap into
+
+        Returns:
+            Tuple of (speed, fuel_consumed, throttle, gear) arrays
+        """
+        n_frames = len(lap_data)
+
+        # Extract arrays
+        speed = np.array([p["speed"] for p in lap_data], dtype=np.float32)
+        fuel = np.array([p["fuel_liters"] for p in lap_data], dtype=np.float32)
+        throttle = np.array([p["throttle"] for p in lap_data], dtype=np.float32)
+        gear = np.array([p["gear"] for p in lap_data], dtype=np.int32)
+
+        # Divide into segments
+        segment_size = max(1, n_frames // n_segments)
+        actual_segments = n_frames // segment_size
+
+        # Reshape arrays for segment aggregation
+        truncated_len = actual_segments * segment_size
+
+        speed_segments = speed[:truncated_len].reshape(actual_segments, segment_size)
+        fuel_segments = fuel[:truncated_len].reshape(actual_segments, segment_size)
+        throttle_segments = throttle[:truncated_len].reshape(actual_segments, segment_size)
+        gear_segments = gear[:truncated_len].reshape(actual_segments, segment_size)
+
+        # Calculate per-segment metrics
+        avg_speed = np.mean(speed_segments, axis=1)
+        fuel_consumed = fuel_segments[:, 0] - fuel_segments[:, -1]  # Fuel at start - fuel at end of segment
+        avg_throttle = np.mean(throttle_segments, axis=1)
+
+        # Most common gear per segment (mode)
+        mode_gear = np.array([
+            np.bincount(seg).argmax() for seg in gear_segments
+        ], dtype=np.int32)
+
+        # Filter out segments with zero or negative fuel consumption (noise)
+        valid_mask = fuel_consumed > 0
+        avg_speed = avg_speed[valid_mask]
+        fuel_consumed = fuel_consumed[valid_mask]
+        avg_throttle = avg_throttle[valid_mask]
+        mode_gear = mode_gear[valid_mask]
+
+        return avg_speed, fuel_consumed, avg_throttle, mode_gear
+
     async def analyze_single_lap(self, lap_s3_path: str) -> SingleLapFuelResponse:
         """
         Analyze fuel consumption for a single lap.
@@ -139,6 +195,9 @@ class FuelAnalysisService:
             lap_data, common_distances
         )
 
+        # Calculate fuel vs speed scatter data
+        speed, fuel_consumed, throttle, gear = self.calculate_fuel_vs_speed(lap_data)
+
         # Build response
         return SingleLapFuelResponse(
             summary=FuelSummary.from_data(
@@ -150,6 +209,12 @@ class FuelAnalysisService:
                 distance=common_distances,
                 fuel_liters=fuel_liters,
                 fuel_percentage=fuel_percentage,
+            ),
+            fuel_speed_scatter=FuelSpeedScatter.from_arrays(
+                speed=speed,
+                fuel_consumed=fuel_consumed,
+                throttle=throttle,
+                gear=gear,
             ),
         )
 
