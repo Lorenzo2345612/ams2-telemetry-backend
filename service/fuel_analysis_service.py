@@ -13,6 +13,7 @@ from models.fuel_analysis import (
     FuelCurve,
     FuelSpeedScatter,
     FuelThrottleScatter,
+    FuelTrackMap,
     FuelComparisonResponse,
     FuelComparisonSummary,
     FuelDeltaSeries,
@@ -174,6 +175,48 @@ class FuelAnalysisService:
 
         return avg_speed, fuel_consumed, avg_throttle, mode_gear
 
+    def calculate_fuel_track_map(
+        self,
+        lap_data: List[dict],
+        n_segments: int = 200,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Calculate fuel consumption at each track position for color-coded map.
+
+        Args:
+            lap_data: Lap frame data
+            n_segments: Number of segments to divide the lap into
+
+        Returns:
+            Tuple of (pos_x, pos_z, fuel_consumed) arrays
+        """
+        n_frames = len(lap_data)
+
+        # Extract arrays
+        pos_x = np.array([p["pos_x"] for p in lap_data], dtype=np.float32)
+        pos_z = np.array([p["pos_z"] for p in lap_data], dtype=np.float32)
+        fuel = np.array([p["fuel_liters"] for p in lap_data], dtype=np.float32)
+
+        # Divide into segments
+        segment_size = max(1, n_frames // n_segments)
+        actual_segments = n_frames // segment_size
+        truncated_len = actual_segments * segment_size
+
+        pos_x_segments = pos_x[:truncated_len].reshape(actual_segments, segment_size)
+        pos_z_segments = pos_z[:truncated_len].reshape(actual_segments, segment_size)
+        fuel_segments = fuel[:truncated_len].reshape(actual_segments, segment_size)
+
+        # Calculate per-segment metrics (use midpoint position)
+        mid_idx = segment_size // 2
+        avg_pos_x = pos_x_segments[:, mid_idx]
+        avg_pos_z = pos_z_segments[:, mid_idx]
+        fuel_consumed = fuel_segments[:, 0] - fuel_segments[:, -1]
+
+        # Ensure no negative values
+        fuel_consumed = np.maximum(fuel_consumed, 0)
+
+        return avg_pos_x, avg_pos_z, fuel_consumed
+
     async def analyze_single_lap(self, lap_s3_path: str) -> SingleLapFuelResponse:
         """
         Analyze fuel consumption for a single lap.
@@ -199,6 +242,9 @@ class FuelAnalysisService:
         # Calculate fuel vs speed scatter data
         speed, fuel_consumed, throttle, gear = self.calculate_fuel_vs_speed(lap_data)
 
+        # Calculate track map data
+        track_pos_x, track_pos_z, track_fuel = self.calculate_fuel_track_map(lap_data)
+
         # Build response
         return SingleLapFuelResponse(
             summary=FuelSummary.from_data(
@@ -222,6 +268,11 @@ class FuelAnalysisService:
                 fuel_consumed=fuel_consumed,
                 speed=speed,
                 gear=gear,
+            ),
+            fuel_track_map=FuelTrackMap.from_arrays(
+                pos_x=track_pos_x,
+                pos_z=track_pos_z,
+                fuel_consumed=track_fuel,
             ),
         )
 

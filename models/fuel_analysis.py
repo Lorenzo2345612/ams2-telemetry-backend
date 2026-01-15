@@ -116,6 +116,39 @@ class FuelThrottleScatter(BaseModel):
         )
 
 
+class FuelTrackMap(BaseModel):
+    """Track map data with fuel consumption color coding."""
+
+    pos_x: List[float] = Field(..., description="X position on track")
+    pos_z: List[float] = Field(..., description="Z position on track")
+    fuel_consumed: List[float] = Field(..., description="Fuel consumed in segment (liters)")
+    fuel_normalized: List[float] = Field(..., description="Fuel consumed normalized (0-1) for color scale")
+
+    @classmethod
+    def from_arrays(
+        cls,
+        pos_x: np.ndarray,
+        pos_z: np.ndarray,
+        fuel_consumed: np.ndarray,
+    ) -> "FuelTrackMap":
+        """Create FuelTrackMap from numpy arrays."""
+        # Normalize fuel consumption to 0-1 for color scale
+        fuel_min = np.min(fuel_consumed)
+        fuel_max = np.max(fuel_consumed)
+        fuel_range = fuel_max - fuel_min
+        if fuel_range > 0:
+            fuel_normalized = (fuel_consumed - fuel_min) / fuel_range
+        else:
+            fuel_normalized = np.zeros_like(fuel_consumed)
+
+        return cls(
+            pos_x=pos_x.tolist(),
+            pos_z=pos_z.tolist(),
+            fuel_consumed=fuel_consumed.tolist(),
+            fuel_normalized=fuel_normalized.tolist(),
+        )
+
+
 class FuelCurve(BaseModel):
     """Fuel remaining curve over lap distance."""
 
@@ -145,6 +178,7 @@ class SingleLapFuelResponse(BaseModel):
     fuel_curve: FuelCurve = Field(..., description="Fuel remaining over distance")
     fuel_speed_scatter: FuelSpeedScatter = Field(..., description="Fuel consumption vs speed scatter data")
     fuel_throttle_scatter: FuelThrottleScatter = Field(..., description="Fuel consumption vs throttle scatter data")
+    fuel_track_map: FuelTrackMap = Field(..., description="Track map with fuel consumption color coding")
 
 
 class FuelComparisonSummary(BaseModel):
