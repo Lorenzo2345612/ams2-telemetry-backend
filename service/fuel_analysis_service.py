@@ -12,6 +12,7 @@ from models.fuel_analysis import (
     FuelSummary,
     FuelCurve,
     FuelSpeedScatter,
+    FuelThrottleScatter,
     FuelComparisonResponse,
     FuelComparisonSummary,
     FuelDeltaSeries,
@@ -214,6 +215,12 @@ class FuelAnalysisService:
                 speed=speed,
                 fuel_consumed=fuel_consumed,
                 throttle=throttle,
+                gear=gear,
+            ),
+            fuel_throttle_scatter=FuelThrottleScatter.from_arrays(
+                throttle=throttle,
+                fuel_consumed=fuel_consumed,
+                speed=speed,
                 gear=gear,
             ),
         )
