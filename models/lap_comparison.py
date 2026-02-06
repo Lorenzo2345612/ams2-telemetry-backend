@@ -123,6 +123,52 @@ class DeltaTimeSeries(BaseModel):
         )
 
 
+class Segment(BaseModel):
+    """A track segment with time delta information."""
+
+    start_distance: float = Field(..., description="Start distance of the segment (meters)")
+    end_distance: float = Field(..., description="End distance of the segment (meters)")
+    time_delta: float = Field(..., description="Time gained or lost in this segment (seconds)")
+
+
+class SegmentAnalysis(BaseModel):
+    """Analysis of top segments where time is gained or lost."""
+
+    time_loss_segments: List[Segment] = Field(
+        ..., description="Top 5 non-overlapping segments where lap 2 loses the most time"
+    )
+    time_gain_segments: List[Segment] = Field(
+        ..., description="Top 5 non-overlapping segments where lap 2 gains the most time"
+    )
+
+    @classmethod
+    def from_arrays(
+        cls,
+        time_loss_segments: List[tuple],
+        time_gain_segments: List[tuple],
+    ) -> "SegmentAnalysis":
+        """
+        Create SegmentAnalysis from segment tuples.
+
+        Args:
+            time_loss_segments: List of (start_dist, end_dist, time_delta) tuples
+            time_gain_segments: List of (start_dist, end_dist, time_delta) tuples
+
+        Returns:
+            SegmentAnalysis instance
+        """
+        return cls(
+            time_loss_segments=[
+                Segment(start_distance=s[0], end_distance=s[1], time_delta=s[2])
+                for s in time_loss_segments
+            ],
+            time_gain_segments=[
+                Segment(start_distance=s[0], end_distance=s[1], time_delta=s[2])
+                for s in time_gain_segments
+            ],
+        )
+
+
 class LapComparisonResponse(BaseModel):
     """Complete lap comparison response."""
 
@@ -132,6 +178,7 @@ class LapComparisonResponse(BaseModel):
     throttle: TelemetryTimeSeries = Field(..., description="Throttle comparison (0-1)")
     brake: TelemetryTimeSeries = Field(..., description="Brake comparison (0-1)")
     steering: TelemetryTimeSeries = Field(..., description="Steering comparison (-1 to 1)")
+    segment_analysis: SegmentAnalysis = Field(..., description="Top segments for time gain/loss")
 
     class Config:
         json_schema_extra = {

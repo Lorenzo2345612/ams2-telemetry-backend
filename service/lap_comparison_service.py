@@ -11,6 +11,7 @@ from models.lap_comparison import (
     LapSummary,
     TelemetryTimeSeries,
     DeltaTimeSeries,
+    SegmentAnalysis,
 )
 import io
 
@@ -104,6 +105,78 @@ class LapComparisonService:
 
         return interp_func(common_distances)
 
+    def find_top_segments(
+        self,
+        distances: np.ndarray,
+        delta_time: np.ndarray,
+        window_size: int = 50,
+        top_n: int = 5,
+    ) -> Tuple[List[tuple], List[tuple]]:
+        """
+        Find top non-overlapping segments where time is gained or lost.
+
+        Uses numpy sliding window to calculate time change per segment,
+        then greedily selects top non-overlapping segments.
+
+        Args:
+            distances: Distance array (common grid)
+            delta_time: Delta time array (lap2 - lap1)
+            window_size: Size of the sliding window in samples
+            top_n: Number of top segments to return
+
+        Returns:
+            Tuple of (time_loss_segments, time_gain_segments)
+            Each segment is (start_distance, end_distance, time_delta)
+        """
+        if len(delta_time) < window_size:
+            return [], []
+
+        # Calculate delta change per window using numpy sliding window
+        windows = np.lib.stride_tricks.sliding_window_view(delta_time, window_size)
+        delta_change = windows[:, -1] - windows[:, 0]
+
+        n_windows = len(delta_change)
+
+        def find_top_non_overlapping(ascending: bool) -> List[tuple]:
+            """Find top non-overlapping segments based on delta change."""
+            sorted_indices = np.argsort(delta_change)
+            if not ascending:
+                sorted_indices = sorted_indices[::-1]
+
+            selected = []
+            used_mask = np.zeros(n_windows, dtype=bool)
+
+            for idx in sorted_indices:
+                if used_mask[idx]:
+                    continue
+
+                start_idx = idx
+                end_idx = idx + window_size - 1
+
+                start_dist = float(distances[start_idx])
+                end_dist = float(distances[end_idx])
+                time_delta = float(delta_change[idx])
+
+                selected.append((start_dist, end_dist, time_delta))
+
+                # Mark overlapping windows as used
+                overlap_start = max(0, idx - window_size + 1)
+                overlap_end = min(n_windows, idx + window_size)
+                used_mask[overlap_start:overlap_end] = True
+
+                if len(selected) >= top_n:
+                    break
+
+            return selected
+
+        # Time loss: largest positive delta change (lap 2 losing time)
+        time_loss_segments = find_top_non_overlapping(ascending=False)
+
+        # Time gain: largest negative delta change (lap 2 gaining time)
+        time_gain_segments = find_top_non_overlapping(ascending=True)
+
+        return time_loss_segments, time_gain_segments
+
     async def compare_laps(
         self, lap_1_s3_path: str, lap_2_s3_path: str
     ) -> LapComparisonResponse:
@@ -136,6 +209,11 @@ class LapComparisonService:
 
         steering_1 = self.interpolate_telemetry(lap_1_data, common_distances, "steering")
         steering_2 = self.interpolate_telemetry(lap_2_data, common_distances, "steering")
+
+        # Find top segments for time gain/loss analysis
+        time_loss_segments, time_gain_segments = self.find_top_segments(
+            common_distances, delta_time
+        )
 
         # Build response using Pydantic models with from methods
         return LapComparisonResponse(
@@ -170,5 +248,9 @@ class LapComparisonService:
                 distance=common_distances,
                 lap_1_values=steering_1,
                 lap_2_values=steering_2,
+            ),
+            segment_analysis=SegmentAnalysis.from_arrays(
+                time_loss_segments=time_loss_segments,
+                time_gain_segments=time_gain_segments,
             ),
         )
