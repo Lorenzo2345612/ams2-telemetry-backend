@@ -169,6 +169,40 @@ class SegmentAnalysis(BaseModel):
         )
 
 
+class DeltaTrackMap(BaseModel):
+    """Track map with delta time derivative coloring."""
+
+    pos_x: List[float] = Field(..., description="X position on track")
+    pos_z: List[float] = Field(..., description="Z position on track")
+    color_value: List[float] = Field(
+        ..., description="Color value: -1 (green/gaining) to 1 (red/losing), 0 = neutral"
+    )
+
+    @classmethod
+    def from_arrays(
+        cls,
+        pos_x: np.ndarray,
+        pos_z: np.ndarray,
+        color_value: np.ndarray,
+    ) -> "DeltaTrackMap":
+        """
+        Create DeltaTrackMap from numpy arrays.
+
+        Args:
+            pos_x: X position array
+            pos_z: Z position array
+            color_value: Color values (-1 to 1)
+
+        Returns:
+            DeltaTrackMap instance
+        """
+        return cls(
+            pos_x=pos_x.tolist(),
+            pos_z=pos_z.tolist(),
+            color_value=color_value.tolist(),
+        )
+
+
 class LapComparisonResponse(BaseModel):
     """Complete lap comparison response."""
 
@@ -179,6 +213,7 @@ class LapComparisonResponse(BaseModel):
     brake: TelemetryTimeSeries = Field(..., description="Brake comparison (0-1)")
     steering: TelemetryTimeSeries = Field(..., description="Steering comparison (-1 to 1)")
     segment_analysis: SegmentAnalysis = Field(..., description="Top segments for time gain/loss")
+    delta_track_map: DeltaTrackMap = Field(..., description="Track map with delta coloring")
 
     class Config:
         json_schema_extra = {

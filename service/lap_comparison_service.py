@@ -12,6 +12,7 @@ from models.lap_comparison import (
     TelemetryTimeSeries,
     DeltaTimeSeries,
     SegmentAnalysis,
+    DeltaTrackMap,
 )
 import io
 
@@ -177,6 +178,65 @@ class LapComparisonService:
 
         return time_loss_segments, time_gain_segments
 
+    def calculate_delta_track_map(
+        self,
+        lap_data: List[dict],
+        common_distances: np.ndarray,
+        delta_time: np.ndarray,
+        time_loss_segments: List[tuple],
+        time_gain_segments: List[tuple],
+        segment_size: int = 20,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Calculate track map with color values based on delta segments.
+
+        Args:
+            lap_data: Reference lap data (for position)
+            common_distances: Common distance grid
+            delta_time: Delta time array
+            time_loss_segments: List of (start_dist, end_dist, time_delta) tuples
+            time_gain_segments: List of (start_dist, end_dist, time_delta) tuples
+            segment_size: Number of points to average per segment
+
+        Returns:
+            Tuple of (pos_x, pos_z, color_value) arrays
+        """
+        # Extract positions from lap data
+        pos_x = np.array([p["pos_x"] for p in lap_data], dtype=np.float32)
+        pos_z = np.array([p["pos_z"] for p in lap_data], dtype=np.float32)
+        distances = np.array([p["lap_distance"] for p in lap_data])
+
+        # Downsample for visualization
+        n_points = len(pos_x)
+        actual_segments = n_points // segment_size
+        truncated_len = actual_segments * segment_size
+
+        pos_x_segments = pos_x[:truncated_len].reshape(actual_segments, segment_size)
+        pos_z_segments = pos_z[:truncated_len].reshape(actual_segments, segment_size)
+        dist_segments = distances[:truncated_len].reshape(actual_segments, segment_size)
+
+        # Take middle point of each segment
+        mid_idx = segment_size // 2
+        avg_pos_x = pos_x_segments[:, mid_idx]
+        avg_pos_z = pos_z_segments[:, mid_idx]
+        avg_dist = dist_segments[:, mid_idx]
+
+        # Initialize color values as neutral (0)
+        color_values = np.zeros(actual_segments, dtype=np.float32)
+
+        # Mark time loss segments (positive = red = 1)
+        for start_dist, end_dist, time_delta in time_loss_segments:
+            mask = (avg_dist >= start_dist) & (avg_dist <= end_dist)
+            # Normalize intensity based on time delta magnitude
+            color_values[mask] = 1.0
+
+        # Mark time gain segments (negative = green = -1)
+        for start_dist, end_dist, time_delta in time_gain_segments:
+            mask = (avg_dist >= start_dist) & (avg_dist <= end_dist)
+            color_values[mask] = -1.0
+
+        return avg_pos_x, avg_pos_z, color_values
+
     async def compare_laps(
         self, lap_1_s3_path: str, lap_2_s3_path: str
     ) -> LapComparisonResponse:
@@ -213,6 +273,15 @@ class LapComparisonService:
         # Find top segments for time gain/loss analysis
         time_loss_segments, time_gain_segments = self.find_top_segments(
             common_distances, delta_time
+        )
+
+        # Calculate track map with delta coloring
+        track_pos_x, track_pos_z, track_color = self.calculate_delta_track_map(
+            lap_1_data,
+            common_distances,
+            delta_time,
+            time_loss_segments,
+            time_gain_segments,
         )
 
         # Build response using Pydantic models with from methods
@@ -252,5 +321,10 @@ class LapComparisonService:
             segment_analysis=SegmentAnalysis.from_arrays(
                 time_loss_segments=time_loss_segments,
                 time_gain_segments=time_gain_segments,
+            ),
+            delta_track_map=DeltaTrackMap.from_arrays(
+                pos_x=track_pos_x,
+                pos_z=track_pos_z,
+                color_value=track_color,
             ),
         )
