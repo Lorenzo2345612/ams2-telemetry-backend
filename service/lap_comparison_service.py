@@ -72,7 +72,7 @@ class LapComparisonService:
 
         # Common distance grid
         max_distance = min(lap_1_distance.max(), lap_2_distance.max())
-        common_distances = np.linspace(0, max_distance, 1000)
+        common_distances = np.linspace(0, max_distance, max(len(lap_1_distance), len(lap_2_distance)))
 
         # Interpolate times
         time_lap_1_at_common = interp_lap_1(common_distances)
