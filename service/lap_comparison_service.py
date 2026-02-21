@@ -110,7 +110,7 @@ class LapComparisonService:
         self,
         distances: np.ndarray,
         delta_time: np.ndarray,
-        window_size: int = 50,
+        window_size: int = 200,
         top_n: int = 5,
     ) -> Tuple[List[tuple], List[tuple]]:
         """
@@ -272,7 +272,7 @@ class LapComparisonService:
 
         # Find top segments for time gain/loss analysis
         time_loss_segments, time_gain_segments = self.find_top_segments(
-            common_distances, delta_time
+            common_distances, delta_time, window_size=200, top_n=5
         )
 
         # Calculate track map with delta coloring
