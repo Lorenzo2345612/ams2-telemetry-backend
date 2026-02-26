@@ -131,6 +131,17 @@ class Segment(BaseModel):
     time_delta: float = Field(..., description="Time gained or lost in this segment (seconds)")
 
 
+class Corner(BaseModel):
+    """A detected corner on the track."""
+
+    corner_number: int = Field(..., description="Corner number (1-indexed)")
+    start_distance: float = Field(..., description="Start distance of the corner (meters)")
+    end_distance: float = Field(..., description="End distance of the corner (meters)")
+    apex_distance: float = Field(..., description="Approximate apex distance (meters)")
+    pos_x: float = Field(..., description="X position of apex for label placement")
+    pos_z: float = Field(..., description="Z position of apex for label placement")
+
+
 class SegmentAnalysis(BaseModel):
     """Analysis of top segments where time is gained or lost."""
 
@@ -177,6 +188,7 @@ class DeltaTrackMap(BaseModel):
     color_value: List[float] = Field(
         ..., description="Color value: -1 (green/gaining) to 1 (red/losing), 0 = neutral"
     )
+    corners: List[Corner] = Field(default=[], description="Detected corners on the track")
 
     @classmethod
     def from_arrays(
@@ -184,6 +196,7 @@ class DeltaTrackMap(BaseModel):
         pos_x: np.ndarray,
         pos_z: np.ndarray,
         color_value: np.ndarray,
+        corners: List[Corner] = None,
     ) -> "DeltaTrackMap":
         """
         Create DeltaTrackMap from numpy arrays.
@@ -192,6 +205,7 @@ class DeltaTrackMap(BaseModel):
             pos_x: X position array
             pos_z: Z position array
             color_value: Color values (-1 to 1)
+            corners: List of detected corners
 
         Returns:
             DeltaTrackMap instance
@@ -200,6 +214,7 @@ class DeltaTrackMap(BaseModel):
             pos_x=pos_x.tolist(),
             pos_z=pos_z.tolist(),
             color_value=color_value.tolist(),
+            corners=corners or [],
         )
 
 
