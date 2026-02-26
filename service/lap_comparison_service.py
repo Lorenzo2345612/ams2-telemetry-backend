@@ -44,7 +44,7 @@ class LapComparisonService:
 
         return lap_data["data"], lap_data.get("lap_time", 0)
 
-    def detect_corners(self, lap_data: List[dict], steering_threshold: float = 0.5, min_samples: int = 10):
+    def detect_corners(self, lap_data: List[dict], steering_threshold: float = 0.05, min_samples: int = 10):
         """
         Detect corners in the lap data based on steering input.
 
