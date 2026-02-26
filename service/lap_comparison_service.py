@@ -11,6 +11,7 @@ from models.lap_comparison import (
     LapSummary,
     TelemetryTimeSeries,
     DeltaTimeSeries,
+    CurvatureSeries,
     SegmentAnalysis,
     DeltaTrackMap,
     Corner,
@@ -231,6 +232,46 @@ class LapComparisonService:
 
         return time_loss_segments, time_gain_segments
 
+    def calculate_curvature(
+        self,
+        lap_data: List[dict],
+        common_distances: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Calculate track curvature and interpolate to common distance grid.
+
+        Args:
+            lap_data: Lap telemetry data
+            common_distances: Common distance grid for interpolation
+
+        Returns:
+            Curvature array interpolated to common distances
+        """
+        x_s = savgol_filter(
+            np.array([p["pos_x"] for p in lap_data]), window_length=11, polyorder=3
+        )
+        z_s = savgol_filter(
+            np.array([p["pos_z"] for p in lap_data]), window_length=11, polyorder=3
+        )
+        lap_distance = np.array([p["lap_distance"] for p in lap_data])
+
+        # Calculate first derivative of position
+        dx = np.gradient(x_s, lap_distance)
+        dz = np.gradient(z_s, lap_distance)
+
+        # Calculate second derivative to find curvature
+        ddx = np.gradient(dx, lap_distance)
+        ddz = np.gradient(dz, lap_distance)
+
+        # Curvature formula: k = (x'*y'' - y'*x'') / (x'^2 + y'^2)^1.5
+        curvature = (dx * ddz - dz * ddx) / (dx**2 + dz**2)**1.5
+
+        # Interpolate to common distance grid
+        interp_func = interp1d(
+            lap_distance, curvature, kind="linear", fill_value="extrapolate"
+        )
+        return interp_func(common_distances)
+
     def build_corners_list(
         self,
         lap_data: List[dict],
@@ -359,6 +400,9 @@ class LapComparisonService:
         steering_1 = self.interpolate_telemetry(lap_1_data, common_distances, "steering")
         steering_2 = self.interpolate_telemetry(lap_2_data, common_distances, "steering")
 
+        # Calculate curvature from reference lap
+        curvature = self.calculate_curvature(lap_1_data, common_distances)
+
         # Find top segments for time gain/loss analysis
         time_loss_segments, time_gain_segments = self.find_top_segments(
             common_distances, delta_time, window_size=200, top_n=5
@@ -411,6 +455,10 @@ class LapComparisonService:
                 distance=common_distances,
                 lap_1_values=steering_1,
                 lap_2_values=steering_2,
+            ),
+            curvature=CurvatureSeries.from_arrays(
+                distance=common_distances,
+                curvature=curvature,
             ),
             segment_analysis=SegmentAnalysis.from_arrays(
                 time_loss_segments=time_loss_segments,

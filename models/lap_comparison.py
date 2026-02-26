@@ -123,6 +123,34 @@ class DeltaTimeSeries(BaseModel):
         )
 
 
+class CurvatureSeries(BaseModel):
+    """Curvature data series along the track."""
+
+    distance: List[float] = Field(..., description="Distance along track (meters)")
+    curvature: List[float] = Field(..., description="Track curvature (1/radius, positive = right turn)")
+
+    @classmethod
+    def from_arrays(
+        cls,
+        distance: np.ndarray,
+        curvature: np.ndarray,
+    ) -> "CurvatureSeries":
+        """
+        Create CurvatureSeries from numpy arrays.
+
+        Args:
+            distance: Distance array
+            curvature: Curvature array
+
+        Returns:
+            CurvatureSeries instance
+        """
+        return cls(
+            distance=distance.tolist(),
+            curvature=curvature.tolist(),
+        )
+
+
 class Segment(BaseModel):
     """A track segment with time delta information."""
 
@@ -227,6 +255,7 @@ class LapComparisonResponse(BaseModel):
     throttle: TelemetryTimeSeries = Field(..., description="Throttle comparison (0-1)")
     brake: TelemetryTimeSeries = Field(..., description="Brake comparison (0-1)")
     steering: TelemetryTimeSeries = Field(..., description="Steering comparison (-1 to 1)")
+    curvature: CurvatureSeries = Field(..., description="Track curvature data")
     segment_analysis: SegmentAnalysis = Field(..., description="Top segments for time gain/loss")
     delta_track_map: DeltaTrackMap = Field(..., description="Track map with delta coloring")
 
