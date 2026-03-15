@@ -20,6 +20,8 @@ class Race(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     status = Column(SQLEnum(RaceStatus), default=RaceStatus.PROCESSING, nullable=False)
     raw_data_path = Column(String, nullable=True)
+    vehicle_name = Column(String, nullable=False, default="Unknown")
+    class_name = Column(String, nullable=False, default="Unknown")
 
     # Relationship to laps
     laps = relationship("Lap", back_populates="race", cascade="all, delete-orphan")

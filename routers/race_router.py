@@ -7,15 +7,29 @@ from models.fuel_analysis import SingleLapFuelResponse, FuelComparisonResponse
 from dependencies.race_dependencies import get_file_storage_service
 from database.db_config import get_db
 from repositories.race_repository import RaceRepositoryDB
-from rq_config.redis_config import get_race_queue
+from repositories.telemetry_parser import AMS2TelemetryParser
+from rq_config.redis_config import get_race_queue, redis_conn
 from workers.race_worker import process_race_data
 from service.lap_comparison_service import LapComparisonService
 from service.fuel_analysis_service import FuelAnalysisService
+from service.lap_radio_service import (
+    _get_lap_time,
+    analyze_time_loss,
+    generate_radio_message,
+    generate_tts_audio,
+    get_fastest_lap,
+    get_last_audio_url,
+    store_last_audio_url,
+    store_last_lap,
+    update_fastest_lap_if_needed,
+)
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from base64 import b64decode, b64encode
 from fastapi import HTTPException
+from pydantic import BaseModel
 import uuid
+import zlib
 
 router = APIRouter(prefix="/race", tags=["race"])
 
@@ -61,7 +75,12 @@ async def upload_race_data(request: RaceRequest, db: Session = Depends(get_db)):
         print(f"[API] Saved compressed data to: {raw_data_path}")
 
         # Create Race record in Processing status
-        await repository.create_race(race_id=race_id, raw_data_path=raw_data_path)
+        await repository.create_race(
+            race_id=race_id,
+            raw_data_path=raw_data_path,
+            vehicle_name=request.vehicle_name or "Unknown",
+            class_name=request.class_name or "Unknown"
+        )
 
         print(f"[API] Created race record with Processing status")
 
@@ -118,6 +137,8 @@ async def list_races(db: Session = Depends(get_db)) -> List[dict]:
             "updated_at": race.updated_at.isoformat(),
             "laps_count": len(race.laps) if race.laps else 0,
             "raw_data_path": race.raw_data_path,
+            "vehicle_name": race.vehicle_name,
+            "class_name": race.class_name,
         }
         for race in races
     ]
@@ -434,3 +455,83 @@ async def compare_lap_fuel(
             status_code=500,
             detail=f"Error comparing fuel: {str(e)}"
         )
+
+
+# ============================================================================
+# LAST-LAP RADIO ENDPOINTS
+# ============================================================================
+
+class LastLapRequest(BaseModel):
+    """Compressed raw packet buffer for a single completed lap."""
+    data: str  # base64-encoded zlib-compressed raw packets
+
+
+@router.post("/last-lap")
+async def submit_last_lap(request: LastLapRequest):
+    """
+    Receive buffered packets for the lap that just completed.
+
+    Flow:
+    1. Decompress base64 → zlib → raw packets
+    2. Parse packets with AMS2TelemetryParser (synchronously, in-process)
+    3. Take the last lap found in the parsed data
+    4. Store it in Redis as 'telemetry:last_lap'
+    5. Compare vs 'telemetry:fastest_lap' to find top-K time-loss zones
+    6. Generate a radio message and synthesize audio via piper-tts
+    7. Store the audio URL in Redis and update fastest lap if needed
+    8. Return lap_time, is_fastest, and audio_url
+    """
+    try:
+        raw_packets = zlib.decompress(b64decode(request.data))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to decompress data: {e}")
+
+    parser = AMS2TelemetryParser()
+    try:
+        parsed_laps = await parser.parse(raw_packets)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Failed to parse telemetry: {e}")
+
+    if not parsed_laps:
+        raise HTTPException(status_code=422, detail="No laps found in the provided data")
+
+    # Use the last lap in the buffer (the one that just finished)
+    lap_data = parsed_laps[-1]
+
+    lap_time = _get_lap_time(lap_data)
+    is_fastest = update_fastest_lap_if_needed(redis_conn, lap_data)
+    store_last_lap(redis_conn, lap_data)
+
+    # Compare vs fastest lap to compute time-loss zones
+    fastest_lap = get_fastest_lap(redis_conn)
+    time_loss_zones: list = []
+    if fastest_lap and not is_fastest:
+        time_loss_zones = analyze_time_loss(lap_data, fastest_lap)
+
+    message = generate_radio_message(time_loss_zones, lap_time, is_fastest)
+    print(f"[LastLap] lap_time={lap_time:.3f}s is_fastest={is_fastest} message='{message}'")
+
+    audio_url: Optional[str] = None
+    try:
+        audio_url = await generate_tts_audio(message)
+        if audio_url:
+            store_last_audio_url(redis_conn, audio_url)
+    except Exception as e:
+        print(f"[LastLap] TTS failed: {e}")
+
+    return {
+        "lap_time": lap_time,
+        "is_fastest": is_fastest,
+        "time_loss_zones": time_loss_zones,
+        "message": message,
+        "audio_url": audio_url,
+    }
+
+
+@router.get("/last-lap/audio")
+async def get_last_lap_audio():
+    """Return the audio URL for the most recent completed lap, or 404 if none."""
+    url = get_last_audio_url(redis_conn)
+    if not url:
+        raise HTTPException(status_code=404, detail="No lap audio available yet")
+    return {"audio_url": url}

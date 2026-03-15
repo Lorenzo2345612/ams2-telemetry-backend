@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # PostgreSQL Database
   postgres:
@@ -65,6 +63,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     container_name: ams2-api
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-ams2_user}:${POSTGRES_PASSWORD:-ams2_password}@postgres:5432/${POSTGRES_DB:-ams2_telemetry}
       REDIS_HOST: redis
@@ -77,6 +76,17 @@ services:
       AWS_REGION: us-east-1
     ports:
       - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./main.py:/app/main.py
+      - ./models:/app/models
+      - ./routers:/app/routers
+      - ./service:/app/service
+      - ./repositories:/app/repositories
+      - ./database:/app/database
+      - ./dependencies:/app/dependencies
+      - ./queue:/app/queue
+      - ./workers:/app/workers
+      - ./rq_config:/app/rq_config
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,14 +126,20 @@ services:
       - ams2-network
     restart: unless-stopped
 
-  # React Frontend
+  # React Frontend (Development mode with hot-reload)
   frontend:
     build:
       context: ../../frontend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     container_name: ams2-frontend
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-3000}:3000"
+    volumes:
+      - ../../frontend/src:/app/src
+      - ../../frontend/index.html:/app/index.html
     depends_on:
       - api
     networks:

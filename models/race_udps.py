@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from fastapi import UploadFile
 
 class RaceUDPs(BaseModel):
@@ -7,3 +7,5 @@ class RaceUDPs(BaseModel):
 
 class RaceRequest(BaseModel):
     data: str  # Base64 encoded string
+    vehicle_name: Optional[str] = "Unknown"
+    class_name: Optional[str] = "Unknown"

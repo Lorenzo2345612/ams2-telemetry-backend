@@ -18,7 +18,13 @@ class RaceRepository(ABC):
         pass
 
     @abstractmethod
-    async def create_race(self, race_id: str, raw_data_path: Optional[str] = None) -> Race:
+    async def create_race(
+        self,
+        race_id: str,
+        raw_data_path: Optional[str] = None,
+        vehicle_name: str = "Unknown",
+        class_name: str = "Unknown"
+    ) -> Race:
         pass
 
     @abstractmethod
@@ -65,12 +71,20 @@ class RaceRepositoryDB(RaceRepository):
         self.db = db
         self.path = "race_data"  # Base path for file storage
 
-    async def create_race(self, race_id: str, raw_data_path: Optional[str] = None) -> Race:
+    async def create_race(
+        self,
+        race_id: str,
+        raw_data_path: Optional[str] = None,
+        vehicle_name: str = "Unknown",
+        class_name: str = "Unknown"
+    ) -> Race:
         """Create a new race record in Processing status."""
         race = Race(
             race_id=race_id,
             status=RaceStatus.PROCESSING,
-            raw_data_path=raw_data_path
+            raw_data_path=raw_data_path,
+            vehicle_name=vehicle_name,
+            class_name=class_name
         )
         self.db.add(race)
         self.db.commit()
@@ -165,9 +179,21 @@ class RaceRepositoryDB(RaceRepository):
 class RaceRepositoryMock(RaceRepository):
     path = "mock_race_data"
 
-    async def create_race(self, race_id: str, raw_data_path: Optional[str] = None) -> Race:
+    async def create_race(
+        self,
+        race_id: str,
+        raw_data_path: Optional[str] = None,
+        vehicle_name: str = "Unknown",
+        class_name: str = "Unknown"
+    ) -> Race:
         # Mock implementation - just return a race object
-        return Race(race_id=race_id, status=RaceStatus.PROCESSING, raw_data_path=raw_data_path)
+        return Race(
+            race_id=race_id,
+            status=RaceStatus.PROCESSING,
+            raw_data_path=raw_data_path,
+            vehicle_name=vehicle_name,
+            class_name=class_name
+        )
 
     async def update_race_status(self, race_id: str, status: RaceStatus) -> Race:
         # Mock implementation
