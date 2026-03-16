@@ -8,9 +8,9 @@ Create Date: 2026-03-15
 from typing import Sequence, Union
 import uuid
 
+import bcrypt
 from alembic import op
 import sqlalchemy as sa
-from passlib.context import CryptContext
 
 
 # revision identifiers, used by Alembic.
@@ -25,8 +25,9 @@ DEFAULT_USER_ID = str(uuid.uuid4())
 
 
 def upgrade() -> None:
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    hashed = pwd_context.hash(DEFAULT_USER_PASSWORD)
+    hashed = bcrypt.hashpw(
+        DEFAULT_USER_PASSWORD.encode("utf-8"), bcrypt.gensalt()
+    ).decode("utf-8")
 
     # Insert default user
     op.execute(
