@@ -120,29 +120,6 @@ def analyze_time_loss(current_lap: dict, fastest_lap: dict) -> list[dict]:
     return zones[:TOP_K_ZONES]
 
 
-def generate_radio_message(
-    time_loss_zones: list[dict],
-    lap_time: float,
-    is_fastest: bool,
-) -> str:
-    """Build a short radio-style message for the completed lap."""
-    minutes = int(lap_time // 60)
-    seconds = lap_time % 60
-    lap_str = f"{minutes}:{seconds:06.3f}"
-
-    if is_fastest:
-        return f"Fastest lap! {lap_str}. Great job, keep it up!"
-
-    if not time_loss_zones:
-        return f"Lap time {lap_str}. Clean lap, keep pushing."
-
-    parts = [
-        f"around {z['distance']} meters losing {z['time_loss']:.1f} seconds"
-        for z in time_loss_zones[:2]
-    ]
-    return f"Lap time {lap_str}. You are losing time {', and '.join(parts)}."
-
-
 # ---------------------------------------------------------------------------
 # TTS
 # ---------------------------------------------------------------------------

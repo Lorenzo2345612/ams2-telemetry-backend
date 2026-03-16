@@ -13,10 +13,10 @@ from rq_config.redis_config import get_race_queue, redis_conn
 from workers.race_worker import process_race_data
 from service.lap_comparison_service import LapComparisonService
 from service.fuel_analysis_service import FuelAnalysisService
+from service.radio_message_service import generate_radio_message
 from service.lap_radio_service import (
     _get_lap_time,
     analyze_time_loss,
-    generate_radio_message,
     generate_tts_audio,
     get_fastest_lap,
     get_last_audio_url,
