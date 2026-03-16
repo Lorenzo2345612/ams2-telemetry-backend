@@ -18,9 +18,10 @@ from repositories.race_repository import RaceRepositoryDB
 from service.file_storage_service import S3FileStorageService
 from database.db_config import SessionLocal
 import os
+from typing import Optional
 
 
-async def _process_race_data_async(race_id: str, raw_data_s3_path: str):
+async def _process_race_data_async(race_id: str, raw_data_s3_path: str, user_id: Optional[str] = None):
     """
     Background task to process race telemetry data.
 
@@ -36,6 +37,7 @@ async def _process_race_data_async(race_id: str, raw_data_s3_path: str):
     Args:
         race_id: The UUID of the race
         raw_data_s3_path: S3 path to the compressed raw data file
+        user_id: The UUID of the user who owns this race (for future use)
     """
     print(f"[Worker] Starting processing for race {race_id} inside async function")
     db = SessionLocal()
@@ -134,13 +136,14 @@ async def _process_race_data_async(race_id: str, raw_data_s3_path: str):
         db.close()
 
 
-def process_race_data(race_id: str, raw_data_s3_path: str):
+def process_race_data(race_id: str, raw_data_s3_path: str, user_id: Optional[str] = None):
     """
     Synchronous wrapper for RQ to call the async processing function.
 
     Args:
         race_id: The UUID of the race
         raw_data_s3_path: S3 path to the compressed raw data file
+        user_id: The UUID of the user who owns this race
     """
     print(f"[Worker] Starting processing for race {race_id}")
-    return asyncio.run(_process_race_data_async(race_id, raw_data_s3_path))
+    return asyncio.run(_process_race_data_async(race_id, raw_data_s3_path, user_id))

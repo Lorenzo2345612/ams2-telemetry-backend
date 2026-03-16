@@ -18,9 +18,21 @@ BUCKET_SIZE = 100        # meters between analysis buckets
 TOP_K_ZONES = 3          # max time-loss zones to report
 LOSS_THRESHOLD = 0.10    # minimum seconds lost in a bucket to be reported
 
-REDIS_KEY_LAST_LAP   = "telemetry:last_lap"
-REDIS_KEY_FASTEST_LAP = "telemetry:fastest_lap"
-REDIS_KEY_LAST_AUDIO  = "telemetry:last_lap_audio"
+
+# ---------------------------------------------------------------------------
+# User-scoped Redis key builders
+# ---------------------------------------------------------------------------
+
+def _key_last_lap(user_id: str) -> str:
+    return f"telemetry:{user_id}:last_lap"
+
+
+def _key_fastest_lap(user_id: str) -> str:
+    return f"telemetry:{user_id}:fastest_lap"
+
+
+def _key_last_audio(user_id: str) -> str:
+    return f"telemetry:{user_id}:last_lap_audio"
 
 
 # ---------------------------------------------------------------------------
@@ -152,37 +164,37 @@ async def generate_tts_audio(text: str, voice: str = TTS_VOICE) -> Optional[str]
 
 
 # ---------------------------------------------------------------------------
-# Redis helpers
+# Redis helpers (user-scoped)
 # ---------------------------------------------------------------------------
 
-def store_last_lap(redis_conn, lap_data: dict) -> None:
-    redis_conn.set(REDIS_KEY_LAST_LAP, json.dumps(lap_data))
+def store_last_lap(redis_conn, lap_data: dict, user_id: str) -> None:
+    redis_conn.set(_key_last_lap(user_id), json.dumps(lap_data))
 
 
-def get_fastest_lap(redis_conn) -> Optional[dict]:
-    raw = redis_conn.get(REDIS_KEY_FASTEST_LAP)
+def get_fastest_lap(redis_conn, user_id: str) -> Optional[dict]:
+    raw = redis_conn.get(_key_fastest_lap(user_id))
     return json.loads(raw) if raw else None
 
 
-def update_fastest_lap_if_needed(redis_conn, lap_data: dict) -> bool:
+def update_fastest_lap_if_needed(redis_conn, lap_data: dict, user_id: str) -> bool:
     """Replace the stored fastest lap if *lap_data* is faster. Returns True when updated."""
     current_time = _get_lap_time(lap_data)
     if current_time <= 0:
         return False
 
-    fastest = get_fastest_lap(redis_conn)
+    fastest = get_fastest_lap(redis_conn, user_id)
     if fastest is None or current_time < _get_lap_time(fastest):
-        redis_conn.set(REDIS_KEY_FASTEST_LAP, json.dumps(lap_data))
+        redis_conn.set(_key_fastest_lap(user_id), json.dumps(lap_data))
         return True
     return False
 
 
-def store_last_audio_url(redis_conn, url: str) -> None:
-    redis_conn.set(REDIS_KEY_LAST_AUDIO, url)
+def store_last_audio_url(redis_conn, url: str, user_id: str) -> None:
+    redis_conn.set(_key_last_audio(user_id), url)
 
 
-def get_last_audio_url(redis_conn) -> Optional[str]:
-    raw = redis_conn.get(REDIS_KEY_LAST_AUDIO)
+def get_last_audio_url(redis_conn, user_id: str) -> Optional[str]:
+    raw = redis_conn.get(_key_last_audio(user_id))
     if raw is None:
         return None
     return raw.decode() if isinstance(raw, bytes) else raw

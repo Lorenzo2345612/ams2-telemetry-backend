@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from models.race_udps import RaceRequest
-from models.database import RaceStatus
+from models.database import Race, RaceStatus, User
 from models.lap_comparison import LapComparisonResponse
 from models.fuel_analysis import SingleLapFuelResponse, FuelComparisonResponse
 from dependencies.race_dependencies import get_file_storage_service
 from database.db_config import get_db
+from auth.dependencies import get_current_user
 from repositories.race_repository import RaceRepositoryDB
 from repositories.telemetry_parser import AMS2TelemetryParser
 from rq_config.redis_config import get_race_queue, redis_conn
@@ -33,8 +34,28 @@ import zlib
 
 router = APIRouter(prefix="/race", tags=["race"])
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _verify_race_ownership(race: Optional[Race], user_id: str) -> Race:
+    """
+    Verify that the race exists and belongs to the given user.
+
+    Returns the race if valid, otherwise raises 404.
+    """
+    if not race or race.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Race not found")
+    return race
+
+
 @router.post("/upload")
-async def upload_race_data(request: RaceRequest, db: Session = Depends(get_db)):
+async def upload_race_data(
+    request: RaceRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Upload race telemetry data.
 
@@ -79,7 +100,8 @@ async def upload_race_data(request: RaceRequest, db: Session = Depends(get_db)):
             race_id=race_id,
             raw_data_path=raw_data_path,
             vehicle_name=request.vehicle_name or "Unknown",
-            class_name=request.class_name or "Unknown"
+            class_name=request.class_name or "Unknown",
+            user_id=current_user.id,
         )
 
         print(f"[API] Created race record with Processing status")
@@ -89,6 +111,7 @@ async def upload_race_data(request: RaceRequest, db: Session = Depends(get_db)):
             process_race_data,
             race_id=race_id,
             raw_data_s3_path=raw_data_path,
+            user_id=current_user.id,
             job_timeout='30m'  # 30 minute timeout for large races
         )
 
@@ -112,22 +135,28 @@ async def upload_race_data(request: RaceRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/list_ids")
-async def list_race_ids(db: Session = Depends(get_db)) -> List[str]:
-    """List all race IDs from the database."""
+async def list_race_ids(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> List[str]:
+    """List all race IDs belonging to the current user."""
     repository = RaceRepositoryDB(db)
-    return await repository.list_race_ids()
+    return await repository.list_race_ids(user_id=current_user.id)
 
 
 @router.get("/list")
-async def list_races(db: Session = Depends(get_db)) -> List[dict]:
+async def list_races(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> List[dict]:
     """
-    List all races with their details.
+    List all races belonging to the current user.
 
     Returns:
         List of race objects with id, status, created_at, laps_count
     """
     repository = RaceRepositoryDB(db)
-    races = await repository.list_races()
+    races = await repository.list_races(user_id=current_user.id)
 
     return [
         {
@@ -145,7 +174,11 @@ async def list_races(db: Session = Depends(get_db)) -> List[dict]:
 
 
 @router.get("/{race_id}/download")
-async def download_race_data(race_id: str, db: Session = Depends(get_db)):
+async def download_race_data(
+    race_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Download the raw compressed data for a race.
 
@@ -155,10 +188,8 @@ async def download_race_data(race_id: str, db: Session = Depends(get_db)):
     repository = RaceRepositoryDB(db)
     storage_service = get_file_storage_service()
 
-    # Get race to ensure it exists
     race = await repository.get_race_status(race_id)
-    if not race:
-        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+    _verify_race_ownership(race, current_user.id)
 
     if not race.raw_data_path:
         raise HTTPException(status_code=404, detail=f"No raw data available for race {race_id}")
@@ -182,7 +213,11 @@ async def download_race_data(race_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{race_id}/download/raw")
-async def download_race_data_raw(race_id: str, db: Session = Depends(get_db)):
+async def download_race_data_raw(
+    race_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Download the raw compressed data for a race as binary file.
 
@@ -192,10 +227,8 @@ async def download_race_data_raw(race_id: str, db: Session = Depends(get_db)):
     repository = RaceRepositoryDB(db)
     storage_service = get_file_storage_service()
 
-    # Get race to ensure it exists
     race = await repository.get_race_status(race_id)
-    if not race:
-        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+    _verify_race_ownership(race, current_user.id)
 
     if not race.raw_data_path:
         raise HTTPException(status_code=404, detail=f"No raw data available for race {race_id}")
@@ -220,7 +253,11 @@ async def download_race_data_raw(race_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/{race_id}")
-async def delete_race(race_id: str, db: Session = Depends(get_db)):
+async def delete_race(
+    race_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Delete a race and all associated data.
 
@@ -229,10 +266,8 @@ async def delete_race(race_id: str, db: Session = Depends(get_db)):
     """
     repository = RaceRepositoryDB(db)
 
-    # Get race to ensure it exists
     race = await repository.get_race_status(race_id)
-    if not race:
-        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+    _verify_race_ownership(race, current_user.id)
 
     try:
         await repository.delete_race(race_id)
@@ -245,7 +280,11 @@ async def delete_race(race_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{race_id}/status")
-async def get_race_status(race_id: str, db: Session = Depends(get_db)):
+async def get_race_status(
+    race_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Get the current status of a race.
 
@@ -254,9 +293,7 @@ async def get_race_status(race_id: str, db: Session = Depends(get_db)):
     """
     repository = RaceRepositoryDB(db)
     race = await repository.get_race(race_id)
-
-    if not race:
-        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+    _verify_race_ownership(race, current_user.id)
 
     return {
         "race_id": race.race_id,
@@ -272,7 +309,8 @@ async def compare_laps(
     race_id: str,
     lap_1_number: int,
     lap_2_number: int,
-    db: Session = Depends(get_db)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> LapComparisonResponse:
     """
     Compare two laps from the same race and return delta time analysis.
@@ -291,10 +329,8 @@ async def compare_laps(
     repository = RaceRepositoryDB(db)
     storage_service = get_file_storage_service()
 
-    # Get race status without loading all laps
     race = await repository.get_race_status(race_id)
-    if not race:
-        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+    _verify_race_ownership(race, current_user.id)
 
     if race.status != RaceStatus.READY:
         raise HTTPException(
@@ -338,7 +374,8 @@ async def compare_laps(
 async def analyze_lap_fuel(
     race_id: str,
     lap_number: int,
-    db: Session = Depends(get_db)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> SingleLapFuelResponse:
     """
     Analyze fuel consumption for a single lap.
@@ -355,10 +392,8 @@ async def analyze_lap_fuel(
     repository = RaceRepositoryDB(db)
     storage_service = get_file_storage_service()
 
-    # Get race status without loading all laps
     race = await repository.get_race_status(race_id)
-    if not race:
-        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+    _verify_race_ownership(race, current_user.id)
 
     if race.status != RaceStatus.READY:
         raise HTTPException(
@@ -394,7 +429,8 @@ async def compare_lap_fuel(
     race_id: str,
     lap_1_number: int,
     lap_2_number: int,
-    db: Session = Depends(get_db)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> FuelComparisonResponse:
     """
     Compare fuel consumption between two laps.
@@ -413,10 +449,8 @@ async def compare_lap_fuel(
     repository = RaceRepositoryDB(db)
     storage_service = get_file_storage_service()
 
-    # Get race status without loading all laps
     race = await repository.get_race_status(race_id)
-    if not race:
-        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+    _verify_race_ownership(race, current_user.id)
 
     if race.status != RaceStatus.READY:
         raise HTTPException(
@@ -467,16 +501,19 @@ class LastLapRequest(BaseModel):
 
 
 @router.post("/last-lap")
-async def submit_last_lap(request: LastLapRequest):
+async def submit_last_lap(
+    request: LastLapRequest,
+    current_user: User = Depends(get_current_user),
+):
     """
     Receive buffered packets for the lap that just completed.
 
     Flow:
-    1. Decompress base64 → zlib → raw packets
+    1. Decompress base64 -> zlib -> raw packets
     2. Parse packets with AMS2TelemetryParser (synchronously, in-process)
     3. Take the last lap found in the parsed data
-    4. Store it in Redis as 'telemetry:last_lap'
-    5. Compare vs 'telemetry:fastest_lap' to find top-K time-loss zones
+    4. Store it in Redis as 'telemetry:{user_id}:last_lap'
+    5. Compare vs 'telemetry:{user_id}:fastest_lap' to find top-K time-loss zones
     6. Generate a radio message and synthesize audio via piper-tts
     7. Store the audio URL in Redis and update fastest lap if needed
     8. Return lap_time, is_fastest, and audio_url
@@ -498,24 +535,25 @@ async def submit_last_lap(request: LastLapRequest):
     # Use the last lap in the buffer (the one that just finished)
     lap_data = parsed_laps[-1]
 
+    user_id = current_user.id
     lap_time = _get_lap_time(lap_data)
-    is_fastest = update_fastest_lap_if_needed(redis_conn, lap_data)
-    store_last_lap(redis_conn, lap_data)
+    is_fastest = update_fastest_lap_if_needed(redis_conn, lap_data, user_id)
+    store_last_lap(redis_conn, lap_data, user_id)
 
     # Compare vs fastest lap to compute time-loss zones
-    fastest_lap = get_fastest_lap(redis_conn)
+    fastest_lap = get_fastest_lap(redis_conn, user_id)
     time_loss_zones: list = []
     if fastest_lap and not is_fastest:
         time_loss_zones = analyze_time_loss(lap_data, fastest_lap)
 
     message = generate_radio_message(time_loss_zones, lap_time, is_fastest)
-    print(f"[LastLap] lap_time={lap_time:.3f}s is_fastest={is_fastest} message='{message}'")
+    print(f"[LastLap] user={user_id} lap_time={lap_time:.3f}s is_fastest={is_fastest} message='{message}'")
 
     audio_url: Optional[str] = None
     try:
         audio_url = await generate_tts_audio(message)
         if audio_url:
-            store_last_audio_url(redis_conn, audio_url)
+            store_last_audio_url(redis_conn, audio_url, user_id)
     except Exception as e:
         print(f"[LastLap] TTS failed: {e}")
 
@@ -529,9 +567,11 @@ async def submit_last_lap(request: LastLapRequest):
 
 
 @router.get("/last-lap/audio")
-async def get_last_lap_audio():
+async def get_last_lap_audio(
+    current_user: User = Depends(get_current_user),
+):
     """Return the audio URL for the most recent completed lap, or 404 if none."""
-    url = get_last_audio_url(redis_conn)
+    url = get_last_audio_url(redis_conn, current_user.id)
     if not url:
         raise HTTPException(status_code=404, detail="No lap audio available yet")
     return {"audio_url": url}

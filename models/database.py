@@ -7,6 +7,22 @@ import uuid
 
 Base = declarative_base()
 
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    email = Column(String, unique=True, nullable=False, index=True)
+    hashed_password = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationship
+    races = relationship("Race", back_populates="user")
+
+    def __repr__(self):
+        return f"<User(id={self.id}, email={self.email})>"
+
+
 class RaceStatus(str, enum.Enum):
     PROCESSING = "Processing"
     FAILED = "Failed"
@@ -22,9 +38,11 @@ class Race(Base):
     raw_data_path = Column(String, nullable=True)
     vehicle_name = Column(String, nullable=False, default="Unknown")
     class_name = Column(String, nullable=False, default="Unknown")
+    user_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
 
-    # Relationship to laps
+    # Relationships
     laps = relationship("Lap", back_populates="race", cascade="all, delete-orphan")
+    user = relationship("User", back_populates="races")
 
     def __repr__(self):
         return f"<Race(race_id={self.race_id}, status={self.status}, created_at={self.created_at})>"

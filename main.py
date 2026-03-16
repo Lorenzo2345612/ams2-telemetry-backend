@@ -1,13 +1,12 @@
 from fastapi import FastAPI
 from routers.race_router import router as race_router
+from routers.auth_router import router as auth_router
 from fastapi.middleware.cors import CORSMiddleware
-from database.db_config import init_db
 from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize database tables
-    init_db()
+    # Startup: Alembic manages schema now — no create_all needed
     yield
     # Shutdown: cleanup if needed
 
@@ -21,4 +20,5 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(race_router)

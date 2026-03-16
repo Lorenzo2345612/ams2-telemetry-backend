@@ -14,7 +14,7 @@ class RaceRepository(ABC):
         pass
 
     @abstractmethod
-    async def list_race_ids(self) -> List[str]:
+    async def list_race_ids(self, user_id: Optional[str] = None) -> List[str]:
         pass
 
     @abstractmethod
@@ -23,7 +23,8 @@ class RaceRepository(ABC):
         race_id: str,
         raw_data_path: Optional[str] = None,
         vehicle_name: str = "Unknown",
-        class_name: str = "Unknown"
+        class_name: str = "Unknown",
+        user_id: Optional[str] = None,
     ) -> Race:
         pass
 
@@ -55,7 +56,7 @@ class RaceRepository(ABC):
         pass
 
     @abstractmethod
-    async def list_races(self) -> List[Race]:
+    async def list_races(self, user_id: Optional[str] = None) -> List[Race]:
         """List all races with their details."""
         pass
 
@@ -76,7 +77,8 @@ class RaceRepositoryDB(RaceRepository):
         race_id: str,
         raw_data_path: Optional[str] = None,
         vehicle_name: str = "Unknown",
-        class_name: str = "Unknown"
+        class_name: str = "Unknown",
+        user_id: Optional[str] = None,
     ) -> Race:
         """Create a new race record in Processing status."""
         race = Race(
@@ -84,7 +86,8 @@ class RaceRepositoryDB(RaceRepository):
             status=RaceStatus.PROCESSING,
             raw_data_path=raw_data_path,
             vehicle_name=vehicle_name,
-            class_name=class_name
+            class_name=class_name,
+            user_id=user_id,
         )
         self.db.add(race)
         self.db.commit()
@@ -160,14 +163,20 @@ class RaceRepositoryDB(RaceRepository):
 
         return race_id
 
-    async def list_race_ids(self) -> List[str]:
-        """List all race IDs from database."""
-        races = self.db.query(Race.race_id).all()
+    async def list_race_ids(self, user_id: Optional[str] = None) -> List[str]:
+        """List race IDs, optionally filtered by user."""
+        query = self.db.query(Race.race_id)
+        if user_id is not None:
+            query = query.filter(Race.user_id == user_id)
+        races = query.all()
         return [race.race_id for race in races]
 
-    async def list_races(self) -> List[Race]:
-        """List all races with their details, ordered by created_at descending."""
-        return self.db.query(Race).order_by(Race.created_at.desc()).all()
+    async def list_races(self, user_id: Optional[str] = None) -> List[Race]:
+        """List races with their details, optionally filtered by user, ordered by created_at descending."""
+        query = self.db.query(Race)
+        if user_id is not None:
+            query = query.filter(Race.user_id == user_id)
+        return query.order_by(Race.created_at.desc()).all()
 
     async def delete_race(self, race_id: str) -> None:
         """Delete a race and all associated data (laps cascade delete)."""
@@ -184,7 +193,8 @@ class RaceRepositoryMock(RaceRepository):
         race_id: str,
         raw_data_path: Optional[str] = None,
         vehicle_name: str = "Unknown",
-        class_name: str = "Unknown"
+        class_name: str = "Unknown",
+        user_id: Optional[str] = None,
     ) -> Race:
         # Mock implementation - just return a race object
         return Race(
@@ -192,7 +202,8 @@ class RaceRepositoryMock(RaceRepository):
             status=RaceStatus.PROCESSING,
             raw_data_path=raw_data_path,
             vehicle_name=vehicle_name,
-            class_name=class_name
+            class_name=class_name,
+            user_id=user_id,
         )
 
     async def update_race_status(self, race_id: str, status: RaceStatus) -> Race:
@@ -231,7 +242,7 @@ class RaceRepositoryMock(RaceRepository):
             np.save(os.path.join(self.path, f"race_{race_id}_lap_{lap['lap_number']}.npy"), np_data)
         return race_id
 
-    async def list_race_ids(self) -> List[str]:
+    async def list_race_ids(self, user_id: Optional[str] = None) -> List[str]:
         # Return a mock list of race IDs
         if not os.path.exists(self.path):
             return []
@@ -239,12 +250,10 @@ class RaceRepositoryMock(RaceRepository):
         race_ids = [f.split("_")[1].split(".")[0] for f in files if f.startswith("race_")]
         return race_ids
 
-    async def list_races(self) -> List[Race]:
+    async def list_races(self, user_id: Optional[str] = None) -> List[Race]:
         # Mock implementation
         return []
 
     async def delete_race(self, race_id: str) -> None:
         # Mock implementation
         pass
-
-
